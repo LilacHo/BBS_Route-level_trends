@@ -103,7 +103,7 @@ neighbours_define_voronoi <- function(real_point_map = route_map, #sf map of str
     # defines the broad regions that contain the included routes
     # simplify strata map (strata_map)
       strata_clip <- strata_map %>%
-        st_buffer(.,50000) %>% #add 50 km buffer (matches the concave-hull buffer below) and simplify boundary to ensure all routes are contained; a smaller buffer here than the hull's can clip away edge routes (e.g. coastal marsh routes) entirely, see dropped_routes check below
+        st_buffer(.,50000) %>% #50 km buffer, matching the concave hull's, so edge routes (e.g. coastal marsh) aren't clipped away
         ungroup() %>%
         summarise() %>%
         st_cast(.,to = "POLYGON")
@@ -120,16 +120,10 @@ neighbours_define_voronoi <- function(real_point_map = route_map, #sf map of str
         summarise() %>%
         arrange(.,strat_lab)
 
-    # DIAGNOSTIC CHECK: the strata_map is only buffered by 10km (see
-    # strata_clip above) while the concave hull is buffered by 50km, so a
-    # route sitting right at/outside the edge of the strata polygon (e.g. a
-    # coastal marsh route) can have its Voronoi cell clipped away entirely.
-    # If that happens, vintj ends up with fewer rows than real_point_map,
-    # which silently misaligns route indices later (knearneigh is run on the
-    # full `centres`, but nb_db is built from vintj) and eventually surfaces
-    # as a cryptic "subscript out of bounds" error deep in the island-
-    # connection code below. Fail loudly here instead, with the identity of
-    # the dropped route(s), so the real cause is obvious.
+    # A route at the edge of the strata polygon can have its Voronoi cell
+    # clipped away entirely. That silently misaligns route indices
+    # (knearneigh uses all `centres`, nb_db uses vintj) and later surfaces as
+    # a cryptic "subscript out of bounds", so fail loudly here instead.
     dropped_routes <- setdiff(real_point_map$strat_lab, vintj$strat_lab)
     if (length(dropped_routes) > 0) {
       stop("neighbours_define_voronoi: ", length(dropped_routes),
@@ -137,9 +131,7 @@ neighbours_define_voronoi <- function(real_point_map = route_map, #sf map of str
            "strata map + concave hull (likely too close to the edge of ",
            "the strata polygon, e.g. a coastal route). Dropped routeF ",
            "value(s): ", paste(dropped_routes, collapse = ", "),
-           ". Consider increasing the strata_clip buffer (currently 10km, ",
-           "see line with st_buffer(.,10000)) so it matches the 50km ",
-           "concave-hull buffer.")
+           ". Consider increasing the strata_clip buffer (currently 50km).")
     }
 
     #create neighbours with spdep::poly2nb

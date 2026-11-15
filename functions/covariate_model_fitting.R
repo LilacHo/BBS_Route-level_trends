@@ -4,16 +4,11 @@
 ## Shared data-prep + fitting functions for the iCAR route-level slope model
 ## (base vs. anthro covariate), used by every script that fits or refits
 ## these models:
-##   - 1c_species_iCAR_covariates.R        (production: all species x base+anthro)
-##   - 1d_refit_nonconverged_species.R     (targeted refit of non-converged fits)
-##   - tests/test_green_heron_debug.R      (single-species debug re-run)
-##
-## Consolidated here (previously hand-duplicated in all three files, which
-## risked drifting out of sync) so there is exactly ONE implementation of
-## the data-prep pipeline and the fitting call. Differences between
-## production/refit/debug use are expressed entirely through function
-## ARGUMENTS (chains, iterations, adapt_delta, show_exceptions, output
-## directories) -- not through separate copies of the function bodies.
+##   - 1a_species_iCAR_covariates.R        (production: all species x base+anthro)
+##   - 1b_refit_nonconverged_species.R     (targeted refit of non-converged fits)
+##   - helper/stubborn_species_refit.R     (extra-push refit)
+## Differences between callers are passed as arguments (chains, iterations,
+## adapt_delta, show_exceptions, output directories).
 ##
 ## Provides:
 ##   species_to_f(sp)          -- file-safe species name
@@ -26,20 +21,8 @@
 ##                                 stan_data to the directories passed in, and
 ##                                 returns a one-row diagnostics data.frame.
 ##
-## fit_one_covariate_model() also includes a chain-completion gate: right
-## after stan_model$sample() returns, it checks stanfit$return_codes()
-## BEFORE touching $summary()/$time(). If any chain failed (nonzero return
-## code), it prints a clear "N of 4 chains completed, chain X failed"
-## message. This exists because a partially-failed chain otherwise surfaces
-## only as a cryptic downstream R-level error from $summary()/$time() (e.g.
-## "arguments imply differing number of rows: 4, 3") with no indication of
-## which chain crashed or why -- this gate makes that diagnosable from
-## console output alone, for every caller (production runs included, not
-## just debug runs).
-##
 ## This file sources functions/neighbours_define_voronoi.R and
-## functions/posterior_summary_functions.R itself, so callers no longer need
-## to source those separately before sourcing this file.
+## functions/posterior_summary_functions.R itself.
 ## =============================================================================
 
 library(dplyr)
@@ -75,11 +58,9 @@ load_covariate <- function(file, value_col, out_name) {
 
 # ---------------------------------------------------------------------------
 #' Data-prep pipeline for one species: BBS data pull, covariate join,
-#' NA-drop, spatial (Voronoi) neighbours. Generalized to an arbitrary NAMED
-#' LIST of covariate lookups so it isn't tied to a fixed covariate set.
-#' Counts with a missing value for ANY covariate in covariate_lookups are
-#' dropped up front, so every model tag fit from the same prepped object
-#' sees identical rows ("same data for a fair comparison").
+#' NA-drop, spatial (Voronoi) neighbours. Counts with a missing value for
+#' ANY covariate in covariate_lookups are dropped up front, so every model
+#' tag fit from the same prepped object sees identical rows.
 #'
 #' @param species Common.Name used for messages/plot labeling
 #' @param species_bbs bbs_english name used by bbsBayes2::stratify()
@@ -153,9 +134,8 @@ prepare_species_data <- function(species, species_bbs, strat,
          "continental-US filter and the key construction in load_covariate() instead.")
   }
 
-  # Drop rows missing any covariate -- same reduced-dataset principle used
-  # throughout this project, so every model tag (including "base") fits on
-  # identical rows.
+  # Drop rows missing any covariate so every model tag (including "base")
+  # fits on identical rows.
   new_data <- new_data %>% filter(complete.cases(new_data[, cov_names, drop = FALSE]))
   n_dropped <- n_before - nrow(new_data)
   cat("    Dropped", n_dropped, "of", n_before,
@@ -243,17 +223,13 @@ prepare_species_data <- function(species, species_bbs, strat,
 #' prepped$new_data, e.g. "anthro") for one species, given
 #' prepare_species_data()'s output. Saves the stanfit, its posterior
 #' summary, a lightweight route lookup, and the stan_data/new_data to the
-#' directories passed in -- always at the SAME filenames
-#' (<species_f>_iCAR_<model_tag>_<firstYear>_<lastYear>_*), regardless of
-#' caller, so a refit or debug run overwrites/replaces a production run's
-#' output in place rather than creating a parallel set of files.
+#' directories passed in, at the same filenames regardless of caller (so a
+#' refit overwrites the production fit in place).
 #'
-#' Includes a chain-completion gate: immediately after stan_model$sample()
-#' returns, checks stanfit$return_codes() before calling $summary()/$time().
-#' If fewer chains completed than requested, prints which chain(s) failed --
-#' this is the most common root cause when $summary()/$time() throw a
-#' cryptic "arguments imply differing number of rows" error (fewer completed
-#' chains than the number configured).
+#' Chain-completion gate: right after sampling, checks
+#' stanfit$return_codes() and reports which chain(s) failed. Otherwise a
+#' failed chain only shows up as a cryptic "arguments imply differing number
+#' of rows: 4, 3" error from $summary()/$time().
 #'
 #' @param species,species_f Common.Name and file-safe name
 #' @param model_tag "base" or a covariate name in prepped$new_data
@@ -263,19 +239,11 @@ prepare_species_data <- function(species, species_bbs, strat,
 #'   no-covariate and single-covariate Stan programs (pass NULL for whichever
 #'   isn't needed by the tags actually being fit)
 #' @param rds_dir,route_info_dir,cmdstanr_output_dir,stan_data_dir output
-#'   directories -- pass the project's production dirs to overwrite/extend a
-#'   real run, or separate *_debug/*_test dirs to keep a run's output fully
-#'   isolated
+#'   directories
 #' @param chains,iter_warmup,iter_sampling,adapt_delta,max_treedepth,
-#'   show_exceptions passed straight through to
-#'   CmdStanModel$sample() -- production defaults match
-#'   1c_species_iCAR_covariates.R's original settings; pass different values
-#'   for a refit (more iterations, higher adapt_delta) or a debug run
-#'   (show_exceptions = TRUE)
+#'   show_exceptions passed straight through to CmdStanModel$sample()
 #' @param overwrite_route_info if TRUE (default), always (re)write
-#'   route_info.rds; if FALSE, skip writing when it already exists (minor
-#'   efficiency option for a large first-time production run where the file
-#'   can't yet exist anyway)
+#'   route_info.rds; if FALSE, skip writing when it already exists
 #' @return a one-row diagnostics data.frame (species, model, max_rhat,
 #'   min_ess, converged, gamma1_mean, n_obs, n_dropped_missing_cov, fit_min)
 fit_one_covariate_model <- function(species, species_f, model_tag, prepped,
@@ -348,9 +316,7 @@ fit_one_covariate_model <- function(species, species_f, model_tag, prepped,
   stanfit$save_object(file.path(rds_dir, paste0(out_base, "_stanfit.rds")))
   saveRDS(summ, file.path(rds_dir, paste0(out_base, "_summ_fit.rds")))
 
-  # Lightweight route lookup (route, routeF, latitude, longitude) — saved on
-  # its own, before cleanup below, so 2c can get what it needs without
-  # depending on the full stan_data.RData save further down.
+  # Lightweight route lookup (route, routeF, latitude, longitude) for 2c.
   route_info_file <- file.path(route_info_dir,
                                paste0(species_f, "_", model_tag, "_",
                                       firstYear, "_", lastYear, "_route_info.rds"))
@@ -359,8 +325,7 @@ fit_one_covariate_model <- function(species, species_f, model_tag, prepped,
     saveRDS(route_info, route_info_file)
   }
 
-  # Raw per-chain CSVs are no longer needed once the fit is saved above —
-  # delete them now instead of letting them accumulate in %TEMP%.
+  # Raw per-chain CSVs are no longer needed once the fit is saved.
   unlink(run_output_dir, recursive = TRUE)
 
   if (!dir.exists(stan_data_dir)) dir.create(stan_data_dir, recursive = TRUE)
@@ -379,11 +344,8 @@ fit_one_covariate_model <- function(species, species_f, model_tag, prepped,
     NA_real_
   }
 
-  # Whole-model convergence: "species are accepted in models converged based
-  # on Rhat < 1.01 and bulk effective sample sizes > 400" -- same criterion
-  # helper/model_convergence.R applies when reading a saved fit back later;
-  # computed here too so it's visible immediately in this run's own console
-  # output and diagnostics row, not just on a later separate pass.
+  # Whole-model convergence: Rhat < 1.01 and bulk ESS > 400 (same criterion
+  # as helper/model_convergence.R).
   converged <- is.finite(max_rhat) && is.finite(min_ess) &&
     max_rhat < 1.01 && min_ess > 400
 

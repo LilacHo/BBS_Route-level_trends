@@ -12,51 +12,29 @@
 ##   anthro -- data/Anthro.csv  (models/slope_iCAR_route_NB_New_covariate.stan)
 ##     log(lambda[r,t]) = alpha[r] + beta[r]*t + gamma1*Anthro[r,t]
 ##
-## This replaces the earlier per-group, many-covariates design (random
-## N-species panels x several habitat/anthro/transition covariates per
-## forest group). That pilot work (see output/files/aridlands_2010_2025.txt
-## and the gamma_lookup/beta_compare write-ups) found: (1) the "*_to_anthro"
-## transition covariates never produced a credible gamma1 in any tested
-## species -- too rare/sparse to be identifiable at this route/year
-## resolution; (2) "anthro" is the one covariate that consistently produced
-## a real, credible, well-powered effect; and (3) group-specific habitat
-## covariates aren't available/consistent across every one of the 12 groups
-## the way Anthro.csv is (it's already used project-wide). So this version
-## drops the per-group covariate machinery entirely and just runs anthro,
-## for everyone, everywhere.
+## Why only anthro: in pilot runs the "*_to_anthro" transition covariates
+## never produced a credible gamma1 (too sparse at route/year resolution),
+## group-specific habitat covariates aren't available consistently across
+## all 12 groups, and anthro was the one covariate with a consistently
+## credible, well-powered effect.
 ##
-## Both models are fit on the SAME reduced dataset per species (only
-## route-years where Anthro is non-NA), same "same data for a fair
-## comparison" principle used throughout this project.
+## Both models are fit on the SAME reduced dataset per species: counts with
+## a missing (NA) Anthro value are dropped once up front, so the comparison
+## is fair.
 ##
-## Covariate data: data/Anthro.csv, one row per BBS route per year
-## (CountryNum/StateNum/Route/.../year/Anthro), loaded with load_covariate()
-## the same way every other covariate in this project has been. Not
+## Covariate data: data/Anthro.csv, one row per BBS route per year. Not
 ## rescaled (standing-stock proportion already spans most of [0,1]).
 ##
-## Route-key format: new_data$route (from bbsBayes2::prepare_data()) is
-## formatted "<StateNum>-<Route>" -- but ONLY when stratified by "bcr" (see
-## every earlier version of this script for the full explanation). strat =
-## "bcr" is used here for the same reason.
+## strat = "bcr": bbsBayes2::prepare_data() only formats new_data$route as
+## "<StateNum>-<Route>" (the key the covariate join needs) when stratified
+## by "bcr".
 ##
-## Per user decision (carried over from every earlier version of this
-## script): counts with a missing (NA) Anthro value are dropped from that
-## species' stan_data, applied once up front, so both model tags see
-## identical data.
-##
-## Species: EVERY species in the project's list, not a random panel --
-## sorted alphabetically for a stable, resumable run order.
-##
-## force_refit defaults to FALSE here (unlike the earlier pilot versions of
-## this script, which defaulted to TRUE) -- this is a full ~600-species
-## production run, not a small re-run-every-time pilot, so by default this
-## script SKIPS any species/tag that already has a saved summ_fit.rds and
-## simply resumes where a previous, possibly-interrupted run left off. Set
-## force_refit <- TRUE to force a clean re-fit of everything instead.
+## Species are sorted alphabetically for a stable, resumable run order.
+## force_refit = FALSE skips any species/tag that already has a saved
+## summ_fit.rds, so an interrupted run resumes where it left off.
 ##
 ## This is a LONG run: ~600 species x 2 models x (BBS data pull + Voronoi
-## neighbours + 4-chain/4000-iteration Stan fit) each. Expect this to take
-## many hours to days depending on hardware -- that's expected, not a bug.
+## neighbours + 4-chain/4000-iteration Stan fit). Expect hours to days.
 ##
 ## This script fits the models and saves, per species and per model tag:
 ##   output/rds/<species>_iCAR_<tag>_<firstYear>_<lastYear>_stanfit.rds
@@ -66,9 +44,24 @@
 ## Plus one combined diagnostics CSV and (via helper/model_convergence.R)
 ## one whole-model convergence table across all species and tags, including
 ## "base" (Rhat < 1.01 and bulk ESS > 400 required across every parameter).
-## For gamma1's own posterior summary and credibility (90% CI excludes
-## zero) across species, run helper/gamma_lookup.R separately -- it's no
-## longer called automatically from this script.
+## For gamma1's posterior summary and credibility (90% CI excludes zero)
+## across species, run helper/gamma_lookup.R separately.
+##
+## Requires (sourced below):
+##   functions/covariate_model_fitting.R
+##     species_to_f()            file-safe species name for output filenames
+##     load_covariate()          reads data/Anthro.csv into a route-year lookup
+##     prepare_species_data()    BBS data pull, Anthro join, NA-drop, and
+##                               spatial neighbours for one species
+##     fit_one_covariate_model() fits "base" or "anthro" for one species and
+##                               saves the output files listed above
+##     That file itself sources:
+##       functions/neighbours_define_voronoi.R
+##         neighbours_define_voronoi()  Voronoi route neighbourhood for the
+##                                      iCAR prior (used by prepare_species_data())
+##       functions/posterior_summary_functions.R  (loaded, not currently used)
+##   helper/model_convergence.R
+##     model_convergence_table() whole-model convergence table, run at the end
 ## =============================================================================
 
 library(bbsBayes2)
@@ -80,19 +73,14 @@ library(spdep)
 library(concaveman)
 library(here)
 
-here::i_am("1c_species_iCAR_covariates.R")
+here::i_am("1a_species_iCAR_covariates.R")
 
-# prepare_species_data() and fit_one_covariate_model() -- and the
-# neighbours_define_voronoi()/posterior_summary_functions.R sources they
-# depend on -- now live in functions/covariate_model_fitting.R, shared with
-# 1d_refit_nonconverged_species.R and tests/test_green_heron_debug.R so
-# there is exactly one implementation instead of three hand-kept copies.
+# species_to_f(), load_covariate(), prepare_species_data(),
+# fit_one_covariate_model() -- shared with 1b_refit_nonconverged_species.R.
 source(here::here("functions", "covariate_model_fitting.R"))
 
-# Ensure cmdstanr writes output to CSV (default) and set output_dir for temp
-# files. Each species/model_tag combo gets its own subfolder under here
-# (created/deleted inside fit_one_covariate_model()) so raw per-chain CSVs
-# don't pile up in %TEMP% across a run of ~600 species x 2 model tags.
+# Each species/model_tag gets its own subfolder here (created/deleted inside
+# fit_one_covariate_model()) so per-chain CSVs don't pile up in %TEMP%.
 cmdstanr_output_dir <- file.path(tempdir(), "cmdstan_output")
 if (!dir.exists(cmdstanr_output_dir)) dir.create(cmdstanr_output_dir, recursive = TRUE)
 
@@ -100,12 +88,9 @@ if (!dir.exists(cmdstanr_output_dir)) dir.create(cmdstanr_output_dir, recursive 
 firstYear  <- 2010
 lastYear   <- 2025
 
-strat <- "bcr"   # NOT "bbs_usgs" -- see earlier versions of this script for
-                 # the full explanation.
+strat <- "bcr"   # NOT "bbs_usgs" -- see header
 
-# Re-fit control: FALSE by default for this full-species run -- see header
-# comment. Set TRUE to force a clean re-fit of everything.
-force_refit <- FALSE
+force_refit <- FALSE   # TRUE = re-fit everything, ignoring saved fits
 
 model_tags <- c("base", "anthro")
 
@@ -120,15 +105,9 @@ if (!dir.exists(here::here("data", "stan_data"))) dir.create(here::here("data", 
 route_info_dir <- here::here("data", "route_info")
 if (!dir.exists(route_info_dir)) dir.create(route_info_dir, recursive = TRUE)
 
-# load_covariate() now comes from functions/covariate_model_fitting.R --
-# one row per route per year; builds a "<StateNum>-<Route>" key to match
-# new_data$route below. out_name becomes both the joined column name in
+# Thin wrapper around load_covariate(): optional rescale by observed max,
+# plus a summary printout. out_name becomes both the joined column name in
 # new_data AND the model_tag used to select it in fit_one_covariate_model().
-
-# Load one covariate per the spec above, optionally rescaling by its own
-# observed max. Kept as a thin wrapper (rather than calling load_covariate()
-# directly) so this script stays easy to extend with another covariate
-# later without restructuring the loop below.
 load_group_covariate <- function(file, value_col, out_name, rescale) {
   lk <- load_covariate(file, value_col, out_name)
   if (rescale) {
@@ -141,16 +120,13 @@ load_group_covariate <- function(file, value_col, out_name, rescale) {
   lk
 }
 
-# Covariate spec -- "anthro" doubles as both the model_tag AND the joined
-# column name in new_data (see prepare_species_data()/
-# fit_one_covariate_model() below, which key off this directly instead of a
-# per-tag if/else chain). Anthro.csv is used project-wide, independent of
-# bird group, so there is no per-group covariate config here anymore.
+# Covariate spec -- the list name is both the model_tag and the joined
+# column name in new_data.
 covariate_specs <- list(
   anthro = list(file = "Anthro.csv", value_col = "Anthro", rescale = FALSE)
 )
 
-# Species list -- EVERY species, not a random panel -----------------------
+# Species list ------------------------------------------------------------
 spp_df <- read.csv(here::here("data", "spp_names_codes_group_aou.csv"),
                    stringsAsFactors = FALSE)
 
@@ -163,15 +139,13 @@ cat("=== Full run: ", nrow(target_spp), " species x ", length(model_tags),
     " models (", paste(model_tags, collapse = ", "), ") ===\n", sep = "")
 cat("Groups represented:", paste(sort(unique(target_spp$Group)), collapse = ", "), "\n")
 
-# species_to_f() now comes from functions/covariate_model_fitting.R
-
 # Compile the Stan models once (reused across every species) ---------------
 model_base   <- cmdstan_model("models/slope_iCAR_route_NB_New.stan",
                               stanc_options = list("O1"))
 model_single <- cmdstan_model("models/slope_iCAR_route_NB_New_covariate.stan",
                               stanc_options = list("O1"))
 
-# Load the (single) covariate once, up front, for every species ------------
+# Load covariates once, up front, for every species ------------------------
 cat("Loading covariates...\n")
 covariate_lookups <- list()
 for (cn in setdiff(model_tags, "base")) {
@@ -179,25 +153,11 @@ for (cn in setdiff(model_tags, "base")) {
   covariate_lookups[[cn]] <- load_group_covariate(spec$file, spec$value_col, cn, spec$rescale)
 }
 
-# prepare_species_data() and fit_one_covariate_model() now come from
-# functions/covariate_model_fitting.R (see source() call near the top of
-# this script) -- previously defined inline here, now shared with
-# 1d_refit_nonconverged_species.R and tests/test_green_heron_debug.R.
-
 # ==========================================================================
-# Main loop: every species, both model tags. Flat -- no per-group looping
-# anymore, since anthro applies the same way to every species regardless of
-# its Group.
+# Main loop: every species, both model tags.
 # ==========================================================================
-# Hardcoded into this script's own flow (not optional/manual):
-# model_convergence_table() (whole-model Rhat/ESS pass-fail, base included)
-# is ALWAYS run at the end of this script, right after the main loop below.
-# gamma_lookup_table() (gamma1's own posterior summary + credibility) is
-# NOT run here -- run helper/gamma_lookup.R separately when you want that
-# report; it's a distinct question (what is gamma1, and is it credible)
-# from whole-model convergence (did every parameter mix properly), and
-# duplicated the convergence check model_convergence_table() already covers
-# more completely (it also checks "base", which gamma_lookup_table() can't).
+# model_convergence_table() is called after the loop; skip its autorun on
+# source() so it uses the settings above.
 model_convergence_skip_autorun <- TRUE
 source(here::here("helper", "model_convergence.R"))
 
@@ -270,10 +230,8 @@ for (i in seq_len(nrow(target_spp))) {
     cat("  Done —", tag, "fit + diagnostics saved for", sp, "\n")
   }
 
-  # Write/refresh the combined diagnostics CSV every 25 species, not just at
-  # the very end -- with a ~600-species, multi-hour/day run, losing all
-  # progress info to an interruption right before the final write would be
-  # painful. Cheap to do (append-in-memory, rewrite whole file).
+  # Checkpoint the diagnostics CSV every 25 species so an interruption
+  # doesn't lose all progress info.
   if (length(diagnostics_list) > 0 && i %% 25 == 0) {
     diag_csv <- file.path(output_dir,
                           paste0("diagnostics_covariates_all_species_anthro_",
