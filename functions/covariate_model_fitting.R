@@ -5,8 +5,7 @@
 ## (base vs. anthro covariate), used by every script that fits or refits
 ## these models:
 ##   - 1a_species_iCAR_covariates.R        (production: all species x base+anthro)
-##   - 1b_refit_nonconverged_species.R     (targeted refit of non-converged fits)
-##   - helper/stubborn_species_refit.R     (extra-push refit)
+##   - 1b_refit_nonconverged_species.R     (targeted refit + extra-push refit)
 ## Differences between callers are passed as arguments (chains, iterations,
 ## adapt_delta, show_exceptions, output directories).
 ##
@@ -316,7 +315,7 @@ fit_one_covariate_model <- function(species, species_f, model_tag, prepped,
   stanfit$save_object(file.path(rds_dir, paste0(out_base, "_stanfit.rds")))
   saveRDS(summ, file.path(rds_dir, paste0(out_base, "_summ_fit.rds")))
 
-  # Lightweight route lookup (route, routeF, latitude, longitude) for 2c.
+  # Lightweight route lookup (route, routeF, latitude, longitude) for step 2.
   route_info_file <- file.path(route_info_dir,
                                paste0(species_f, "_", model_tag, "_",
                                       firstYear, "_", lastYear, "_route_info.rds"))

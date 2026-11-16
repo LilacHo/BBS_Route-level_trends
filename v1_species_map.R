@@ -1,4 +1,4 @@
-# 3d_visualization_map.R
+# v1_species_map.R
 #
 # One map per species x model (base / anthro) x climate scenario (RCP 4.5 /
 # RCP 8.5) showing, on a single panel:
@@ -6,12 +6,6 @@
 #     from the 2025 classified-change raster (Bateman et al. 2020), and
 #   - each BBS route's population trend (points): colour = Decrease /
 #     Increase / Not significant, size = |annual % change|.
-#
-# Replaces the earlier single-species (Blue Jay) MARSS version of this script;
-# the map layout is the same idea, but the trends now come from this
-# project's iCAR route-level fits (2c) and the SDM category from the rasters
-# 3c already extracts against, so every species/model/scenario is drawn the
-# same way with no per-species code.
 #
 # Range-shift classes (raster values -> map category):
 #   1-3 (extirpation, worsening, slightly worsening) -> Decreasing suitability
@@ -21,28 +15,28 @@
 # This is the same Decreasing suitability / Stable / Increasing suitability grouping 4c uses in its
 # PART 3-4.
 #
-# Trend class (per route, from the 90% credible interval 2c writes as
+# Trend class (per route, from the 90% credible interval step 2 writes as
 # trend_lci / trend_uci):
 #   trend_lci > 0 -> Increase | trend_uci < 0 -> Decrease | otherwise Not significant
 #
 # Reads:  output/species_routes_covariates/per_species_sdm/*_route_trends_sdm.csv
-#           (3c; species, group, route coords, trend, trend_lci/uci, route_converged)
+#           (step 3; species, group, route coords, trend, trend_lci/uci, route_converged)
 #         data/rcp{45,85}_<group>/<code>/<group>_<code>_breeding_2025_{45,85}_ENSEMBLE_classifiedchange.tif
 #         bbsBayes2's "prov_state" map + spData::world for the base map
 # Writes: output/species_maps/<model>/<scenario>/<species>_<model>_<scenario>_<firstYear>_<lastYear>.png
 #         output/species_maps/map_manifest_<firstYear>_<lastYear>.csv (one row per map attempted)
 #
-# Resumable like 1c: a map that already exists is skipped unless
+# Resumable like 1a: a map that already exists is skipped unless
 # overwrite = TRUE, so this can be stopped and restarted. A species whose
 # raster is missing for a scenario is skipped for that scenario with a
-# warning (same convention as 3c), not treated as fatal.
+# warning (same convention as step 3), not treated as fatal.
 
 library(here)
 library(tidyverse)
 library(terra)
 library(sf)
 
-here::i_am("3d_visualization_map.R")
+here::i_am("v1_species_map.R")
 
 # Settings -------------------------------------------------------------------
 firstYear <- 2010
@@ -90,7 +84,7 @@ fig_dpi   <- 300
 sdm_dir <- here::here("output", "species_routes_covariates", "per_species_sdm")
 out_dir <- here::here("output", "species_maps")
 
-# Colours (range shift as in the Blue Jay reference map) --------------------
+# Colours ---------------------------------------------------------------------
 shift_cols <- c("Decreasing suitability" = "#FF7F00", "Stable" = "#FFFF99", "Increasing suitability" = "#19B2FF")
 trend_cols <- c("Decrease" = "#E51932", "Increase" = "#654CFF", "Not significant" = "#8FD3C0")
 
@@ -122,7 +116,7 @@ conus_ext  <- terra::ext(conus_bbox[["xmin"]], conus_bbox[["xmax"]], conus_bbox[
 # Load route trend tables -----------------------------------------------------
 sdm_files <- list.files(sdm_dir, pattern = "_route_trends_sdm\\.csv$", full.names = TRUE)
 if (length(sdm_files) == 0) {
-  stop("No *_route_trends_sdm.csv files in ", sdm_dir, " -- run 3c_add_SDM_covariates.R first.")
+  stop("No *_route_trends_sdm.csv files in ", sdm_dir, " -- run 3_add_SDM_covariates.R first.")
 }
 
 trends <- map_dfr(sdm_files, function(f) {

@@ -37,7 +37,7 @@
 #    category effects: trend ~ 0 + group + cat3 + (1 + cat3 | species_code).
 #
 # Reads:  output/species_routes_covariates/per_species_sdm/*_route_trends_sdm.csv
-#         (written by 3c_add_SDM_covariates.R)
+#         (written by 3_add_SDM_covariates.R)
 # Writes: output/files/sdm_category_mixed_model_summary_2010_2025.csv
 #           One row: data counts, fixed effects and C - E (SE, 95% CI, p),
 #           t df / scale, random-effect SDs / correlations, expected % of
@@ -99,7 +99,7 @@ check_fit <- function(f, label) {
 
 # Read ----------------------------------------------------------------------
 sdm_files <- list.files(in_dir, pattern = "_route_trends_sdm\\.csv$", full.names = TRUE)
-if (length(sdm_files) == 0) stop("No *_route_trends_sdm.csv files in ", in_dir, " -- run 3c first.")
+if (length(sdm_files) == 0) stop("No *_route_trends_sdm.csv files in ", in_dir, " -- run 3_add_SDM_covariates.R first.")
 all_routes <- sdm_files %>%
   map_dfr(~ read.csv(.x, stringsAsFactors = FALSE)) %>%
   as_tibble()

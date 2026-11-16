@@ -1,42 +1,20 @@
-# 3c_add_SDM_covariates.R
-#
-# Covariate-pipeline counterpart of 3_add_SDM.R — identical logic, different
-# input/output directories, so it can run against the per-species-per-model
-# CSVs from 2c_generate_route_trend_csvs_covariates.R without touching
-# 3_add_SDM.R or colliding with its output/species_routes /
-# output/species_routes_sdm directories (which belong to the original,
-# non-covariate pipeline: 1_species_iCAR_2010_2025.R ->
-# 2_generate_route_trend_csvs.R -> 3_add_SDM.R).
+# 3_add_SDM_covariates.R
 #
 # Add rcp45 and rcp85 climate-scenario columns to each per-species-per-model
-# route CSV written by 2c_generate_route_trend_csvs_covariates.R
+# route CSV written by 2_generate_route_trend_csvs_covariates.R
 # (output/species_routes_covariates/per_species/) by extracting SDM
 # classified-change raster values at each route location, and write the
 # revised CSVs to output/species_routes_covariates/per_species_sdm/.
 #
-# Each input file already has exactly one species_code (2c writes one file
-# per species-per-model-tag), which is what this script requires — the
-# combined all_route_trends_*.csv from 2c (many species AND many models in
-# one file) would NOT work here directly, hence the per-species files.
-# Files also carry "group" and "model" columns through unchanged (this
-# script doesn't look at "model", just passes it along like every other
-# pre-existing column; "group" is used below to resolve raster paths, and
-# also carried through so it doesn't need to be re-joined later).
-#
-# Since 1c_species_iCAR_covariates.R / 2c now fit and combine EVERY species
-# across all 12 groups in one run (not one bird_group at a time), this
-# script will encounter files from every group in a single run too, and
-# needs rcp45/rcp85 rasters for whichever groups' species it's asked to
-# process. A missing raster for one species/group is common when only some
-# groups' SDM rasters have been generated so far — this script SKIPS that
-# species (with a warning) rather than aborting the whole run, so it can
-# make progress on whatever groups do have rasters available while you
-# backfill the rest.
+# Needs one species_code per input file, hence step 2's per-species files rather
+# than its combined CSV. The "group" column picks the raster folder; all
+# other columns pass through unchanged. A species whose rasters are missing
+# is skipped with a warning rather than aborting the run.
 #
 # Workflow (per *_route_trends.csv file):
 #   1. Skip the file if its *_route_trends_sdm.csv output already exists.
 #   2. Read the species code (species_code column, one code per file) and
-#      group (group column, written directly by 2c — no lookup needed).
+#      group (group column, written directly by step 2 — no lookup needed).
 #   3. Build the rcp45/rcp85 raster paths from the group, which drives both the
 #      directory (rcp45_<group>/, rcp85_<group>/) and the file name prefix
 #      (<group>_<code>_breeding_2025_<45|85>_ENSEMBLE_classifiedchange.tif).
@@ -57,20 +35,11 @@
 #   6 = improving (50 to Inf % change)
 #   7 = colonization
 #
-# Known data bug (confirmed via tests/check_sdm.R, fixed one-time in already
-# -written output by tests/fix_rcp45_scaling.R): the RCP4.5 (rcp45) raster
-# for exactly 5 species stores its 0-7 category codes scaled x10000 (e.g.
-# 40000 instead of 4; 0 stays 0). Confirmed via tests/check_sdm.R to be in
-# the raw .tif files themselves (same pattern across the WHOLE raster, not
-# just at route locations) -- not introduced by this script's extraction
-# code, which does no rescaling of its own. RCP8.5 (rcp85) for these same
-# species, and rcp45 for every other species, are unaffected.
-# 3d_visualization_map.R already corrects for this the same way (detects
-# any raster max > 7 and divides by 10000) when building the range-shift
-# maps. Hardcoded here to just these 5 known-affected species (rather than
-# a blanket "divide if max > 7" rule) so a genuinely different future data
-# problem isn't silently misread as this same bug -- if a new species shows
-# this pattern, confirm with tests/check_sdm.R and add it to this list.
+# Known data bug (confirmed with archive/check_sdm.R): the raw rcp45 .tif for
+# these 5 species stores its 0-7 codes scaled x10000 (40000 instead of 4).
+# rcp85, and rcp45 for every other species, are unaffected. Listed explicitly
+# (rather than "divide if max > 7") so a different future data problem isn't
+# misread as this one; add a species here only after confirming it.
 rcp45_scale_bug_species <- c("ACWO", "AMDI", "BHGR", "WILL", "WODU")
 
 library(here)
@@ -78,10 +47,9 @@ library(tidyverse)
 library(terra)
 library(sf)
 
-here::i_am("3c_add_SDM_covariates.R")
+here::i_am("3_add_SDM_covariates.R")
 
-# List all species-per-model route CSVs -------------------------------------
-# (written by 2c_generate_route_trend_csvs_covariates.R)
+# List all species-per-model route CSVs (from step 2) ---------------------------
 species_routes_dir <- here::here("output", "species_routes_covariates", "per_species")
 species_files <- list.files(species_routes_dir, pattern = "_route_trends\\.csv$",
                             full.names = TRUE)
@@ -106,18 +74,16 @@ for (f in species_files) {
 
   sp_routes <- read.csv(f)
 
-  # Get the species abbreviation from the CSV (should be unique per file)
+  # Species code (must be unique per file)
   abbr <- unique(sp_routes$species_code)
   if (length(abbr) != 1) {
     message("WARNING: Multiple species codes in ", basename(f), " — skipping")
     next
   }
 
-  # Land-cover group is written directly by 2c_generate_route_trend_csvs_covariates.R
-  # (the "group" column) -- no separate lookup needed.
   if (!"group" %in% names(sp_routes)) {
     message("WARNING: No 'group' column in ", basename(f),
-            " — re-run 2c_generate_route_trend_csvs_covariates.R to regenerate it. Skipping.")
+            " — re-run 2_generate_route_trend_csvs_covariates.R to regenerate it. Skipping.")
     next
   }
   bird_group <- unique(sp_routes$group)
@@ -127,8 +93,6 @@ for (f in species_files) {
   }
 
   cat("Processing:", abbr, "[", bird_group, "] (", basename(f), ")\n")
-
-  # Initialize new columns
 
   sp_routes$rcp45 <- NA
   sp_routes$rcp85 <- NA
@@ -141,11 +105,8 @@ for (f in species_files) {
   rcp85_file <- file.path(rcp85_dir, abbr,
                           paste0(bird_group, "_", abbr, "_breeding_2025_85_ENSEMBLE_classifiedchange.tif"))
 
-  # Require both raster files; WARN and skip this file (not stop the whole
-  # run) if either is missing -- with ~600 species across 12 groups, it's
-  # expected that only some groups' SDM rasters exist at any given time.
-  # Distinguish "whole group folder missing" from "just this species' file
-  # missing" so the message points at the right thing to fix.
+  # Require both rasters; warn and skip if either is missing, saying whether
+  # the whole group folder or just this species' file is absent.
   missing_msg <- NULL
   if (!dir.exists(rcp45_dir)) {
     missing_msg <- paste0("rcp45 raster folder not found: ", rcp45_dir,
@@ -174,7 +135,7 @@ for (f in species_files) {
     if (abbr %in% rcp45_scale_bug_species) {
       sp_routes$rcp45 <- round(sp_routes$rcp45 / 10000)
       cat("  NOTE:", abbr, "-- rcp45 corrected for known x10000 raster scaling bug",
-          "(see tests/check_sdm.R)\n")
+          "(see archive/check_sdm.R)\n")
     }
   }
 
@@ -187,7 +148,6 @@ for (f in species_files) {
     sp_routes$rcp85 <- vals_85[, 2]
   }
 
-  # Write revised CSV to output/species_routes_covariates/per_species_sdm/
   write.csv(sp_routes, out_file, row.names = FALSE)
 
   cat("  Wrote:", basename(out_file),

@@ -11,7 +11,7 @@ firstYear <- 2010
 lastYear  <- 2025
 model_tag <- "anthro"   # which fit's route set to map ("base" or "anthro")
 
-# Same rule as 3d/4c: only count route x species rows whose route-level
+# Same rule as v1/4c: only count route x species rows whose route-level
 # parameters converged.
 require_route_converged <- TRUE
 
@@ -30,7 +30,7 @@ in_csv  <- here::here("output", "species_routes_covariates",
 out_dir <- here::here("output", "figures")
 dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
 
-# Base map (identical to 3d) -------------------------------------------------
+# Base map (identical to v1) -------------------------------------------------
 map_crs <- "+proj=aea +lat_0=40 +lon_0=-96 +lat_1=20 +lat_2=60 +x_0=0 +y_0=0 +ellps=GRS80 +units=m +no_defs"
 
 states_map <- bbsBayes2::load_map("prov_state") %>% st_transform(map_crs)
