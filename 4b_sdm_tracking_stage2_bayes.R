@@ -1,8 +1,8 @@
-# 4i_sdm_tracking_stage2_bayes.R
+# 4b_sdm_tracking_stage2_bayes.R
 #
 # Stage 2 of the Bayesian "SDM tracking" analysis: a hierarchical Bayesian
 # random-effects meta-analysis of the per-species quantities produced by stage 1
-# (4h_sdm_tracking_stage1_draws.R). Fast: one row per species. Runs anywhere.
+# (4a_sdm_tracking_stage1_draws.R). Fast: one row per species. Runs anywhere.
 #
 # Question: does SDM-projected habitat-suitability change track observed
 # population trends, and for which species / groups does it not?
@@ -26,7 +26,6 @@
 #                    habitat group | family |
 #                    order + family | diet (8) | migration, Red List (3), invasive (US-RIIS): fixed effects
 #   worsening-side slope (classes 1-4) and improving-side slope (classes 4-7): overall
-#   Contraction - Expansion: overall  (for comparison with the glmmTMB analysis, 4f)
 #
 # Reads:  output/files/sdm_tracking/sdm_tracking_stage1_species_<tag>_<scenario>_<firstYear>_<lastYear>.csv
 #         data/spp_names_codes_group_aou_taxa_redlist_diet_migration_invasive.csv  (traits)
@@ -45,13 +44,13 @@ library(cmdstanr)
 library(posterior)
 library(loo)
 
-here::i_am("4i_sdm_tracking_stage2_bayes.R")
+here::i_am("4b_sdm_tracking_stage2_bayes.R")
 
 # Settings -------------------------------------------------------------------
 model_tag <- "anthro"; scenario <- "rcp45"; firstYear <- 2010; lastYear <- 2025
-# Must match exclude_classes in 4h_sdm_tracking_stage1_draws.R: integer(0) = main analysis,
+# Must match exclude_classes in 4a_sdm_tracking_stage1_draws.R: integer(0) = main analysis,
 # c(7) = colonization excluded (reads and writes files tagged "_no7").
-exclude_classes <- c(7)
+exclude_classes <- integer(0)
 run_tag <- if (length(exclude_classes) > 0) paste0("_no", paste(sort(exclude_classes), collapse = "")) else ""
 suffix <- paste0(paste(model_tag, scenario, firstYear, lastYear, sep = "_"), run_tag)
 stage1_csv <- here::here("output", "files", "sdm_tracking", paste0("sdm_tracking_stage1_species_", suffix, ".csv"))
@@ -61,7 +60,6 @@ out_dir    <- here::here("output", "files", "sdm_tracking")
 
 class_threshold <- 0.90   # posterior probability needed to call a species/group Tracks or Contrary
 prior_scale_slope <- 1    # %/yr per class step (observed scale ~0.2)
-prior_scale_ce    <- 3    # %/yr (Contraction - Expansion, observed scale ~1)
 chains <- 4; iter_warmup <- 1000; iter_sampling <- 2000; adapt_delta <- 0.99
 seed <- 20261014
 
@@ -207,15 +205,14 @@ for (s in specs) {
   groups[[s[[1]]]] <- bind_rows(group_table(m, s[[1]], 1), group_table(m, s[[1]], 2))
 }
 side <- list()
-for (resp in c("slope_low", "slope_up", "ce")) {
+for (resp in c("slope_low", "slope_up")) {
   dd <- d_all %>% filter(status == "ok", is.finite(.data[[paste0(resp, "_mean")]]), .data[[paste0(resp, "_sd")]] > 0)
   top_class <- max(setdiff(1:7, exclude_classes))
   lab <- c(slope_low = "Worsening-side slope (classes 1-4)",
-           slope_up = paste0("Improving-side slope (classes 4-", top_class, ")"),
-           ce = "Contraction - Expansion")[[resp]]
+           slope_up = paste0("Improving-side slope (classes 4-", top_class, ")"))[[resp]]
   cat("Fitting:", lab, "\n")
   m <- fit_meta(dd, paste0(resp, "_mean"), paste0(resp, "_sd"), NULL, NULL, 0,
-                if (resp == "ce") prior_scale_ce else prior_scale_slope)
+                prior_scale_slope)
   side[[resp]] <- summarise_model(m, "Overall", lab)$row
 }
 
@@ -241,7 +238,7 @@ spt <- species_theta(fits[[t_name]]) %>% rename_with(~ paste0(.x, "_studentt"), 
 spg <- species_theta(fits[["Habitat group"]]) %>% rename_with(~ paste0(.x, "_groupmodel"), -species_code)
 species_out <- d %>%
   select(species, species_code, group, family, order, diet, migration, redlist, invasive, n_routes, n_classes,
-         starts_with("n_class"), slope_mean, slope_sd, slope_p_pos, slope_low_mean, slope_up_mean, ce_mean) %>%
+         starts_with("n_class"), slope_mean, slope_sd, slope_p_pos, slope_low_mean, slope_up_mean) %>%
   left_join(sp0, by = "species_code") %>% left_join(spt, by = "species_code") %>% left_join(spg, by = "species_code") %>%
   mutate(class_stage1 = classify(slope_p_pos),
          class_overall = classify(theta_p_pos_overall),
@@ -280,7 +277,7 @@ w("Student-t species-level (used for species classification): mu ", f2(os$mu_mea
 w("Raw stage-1 (unpooled) slopes: median ", f2(median(d$slope_mean), 3), "; ", sum(d$slope_p_pos >= class_threshold), " species P(>0) >= ",
   class_threshold, ", ", sum(1 - d$slope_p_pos >= class_threshold), " species P(<0) >= ", class_threshold)
 w("")
-w("== 2. WORSENING vs IMPROVING SIDE, and CONTRACTION - EXPANSION ==")
+w("== 2. WORSENING vs IMPROVING SIDE ==")
 for (r in seq_len(nrow(side_tab))) {
   x <- side_tab[r, ]
   w(sprintf("%-38s n = %3d  mu %s  P(mu>0) = %.3f  tau %.3f", x$response, x$n_species,

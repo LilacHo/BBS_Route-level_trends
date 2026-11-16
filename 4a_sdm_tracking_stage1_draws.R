@@ -1,8 +1,8 @@
-# 4h_sdm_tracking_stage1_draws.R
+# 4a_sdm_tracking_stage1_draws.R
 #
 # Stage 1 of the Bayesian "SDM tracking" analysis. Run this where the Stan
-# posterior draws (*_stanfit.rds from 1c/1d) are stored; stage 2
-# (4i_sdm_tracking_stage2_bayes.R) only needs this script's small CSV output.
+# posterior draws (*_stanfit.rds from 1a/1b) are stored; stage 2
+# (4b_sdm_tracking_stage2_bayes.R) only needs this script's small CSV output.
 #
 # Question: does SDM-projected habitat-suitability change track observed
 # population trends, and for which species / groups does it not?
@@ -15,8 +15,10 @@
 #      the TRACKING SLOPE, in %/yr per class step. Positive = trends are better
 #      where the SDM projects improving suitability (the species tracks it);
 #   3. also computes the slope separately on the worsening side (classes 1-4)
-#      and the improving side (classes 4-7), and the mean trend in Contraction
-#      (1-3), Stable (4) and Expansion (5-7) routes, and Contraction - Expansion.
+#      and the improving side (classes 4-7), and the mean trend in Decreasing-
+#      suitability (1-3), Neutral (4) and Increasing-suitability (5-7) routes.
+#      (Output columns keep their original names: mean_con = Decreasing,
+#      mean_stable = Neutral, mean_exp = Increasing.)
 # Repeating this over the draws gives each species a full posterior for each
 # quantity. Because the draws are joint across routes, these posteriors carry
 # both the route-level trend uncertainty and the spatial (iCAR) correlation
@@ -37,7 +39,7 @@
 # Reads:  <rds_dir>/<species>_iCAR_<tag>_<firstYear>_<lastYear>_stanfit.rds   (cmdstanr save_object)
 #         <route_info_dir>/<species>_<tag>_<firstYear>_<lastYear>_route_info.rds (route <-> routeF)
 #         output/species_routes_covariates/per_species_sdm/<species>_<tag>_route_trends_sdm.csv
-#           (route, SDM class, route_converged; from 3c)
+#           (route, SDM class, route_converged; from step 3)
 # Writes: output/files/sdm_tracking/sdm_tracking_stage1_species_<tag>_<scenario>_<firstYear>_<lastYear>.csv
 #           one row per species: status, route counts per class, and for each
 #           quantity its posterior mean, sd, 2.5% / 97.5% quantiles and P(> 0)
@@ -55,15 +57,15 @@ library(tidyverse)
 library(posterior)
 library(cmdstanr)
 
-here::i_am("4h_sdm_tracking_stage1_draws.R")
+here::i_am("4a_sdm_tracking_stage1_draws.R")
 
 # Settings -------------------------------------------------------------------
 model_tag  <- "anthro"
 scenario   <- "rcp45"
 firstYear  <- 2010
 lastYear   <- 2025
-rds_dir        <- here::here("output", "rds")          # matches 1c_species_iCAR_covariates.R (*_stanfit.rds)
-route_info_dir <- here::here("data", "route_info")     # matches 1c_species_iCAR_covariates.R (*_route_info.rds)
+rds_dir        <- here::here("output", "rds")          # matches 1a_species_iCAR_covariates.R (*_stanfit.rds)
+route_info_dir <- here::here("data", "route_info")     # matches 1a_species_iCAR_covariates.R (*_route_info.rds)
 sdm_dir        <- here::here("output", "species_routes_covariates", "per_species_sdm")
 out_dir        <- here::here("output", "files", "sdm_tracking")
 
@@ -76,8 +78,8 @@ only_species <- NULL    # e.g. c("Song Sparrow", "Wild Turkey") for a quick test
 # SDM classes to drop before computing slopes (sensitivity analysis). integer(0) = main
 # analysis (all classes 1-7); c(7) = drop colonization. A non-empty setting adds a tag such
 # as "_no7" to every output file name, so it never overwrites the main results.
-# Must match the same setting in 4i_sdm_tracking_stage2_bayes.R.
-exclude_classes <- c(7)
+# Must match the same setting in 4b_sdm_tracking_stage2_bayes.R.
+exclude_classes <- integer(0)
 
 run_tag  <- if (length(exclude_classes) > 0) paste0("_no", paste(sort(exclude_classes), collapse = "")) else ""
 suffix   <- paste0(paste(model_tag, scenario, firstYear, lastYear, sep = "_"), run_tag)
@@ -151,11 +153,10 @@ process_species <- function(sdm_file) {
   s_up  <- if (n_distinct(x[up])  >= 2) slope_draws(Y[, up,  drop = FALSE], x[up])  else NULL
   mean_in <- function(idx) if (any(idx)) rowMeans(Y[, idx, drop = FALSE]) else NULL
   m_con <- mean_in(sdm$cls <= 3); m_sta <- mean_in(sdm$cls == 4); m_exp <- mean_in(sdm$cls >= 5)
-  ce <- if (!is.null(m_con) && !is.null(m_exp)) m_con - m_exp else NULL
 
   row <- bind_cols(base, as_tibble(c(
     summ(s_all, "slope"), summ(s_low, "slope_low"), summ(s_up, "slope_up"),
-    summ(m_con, "mean_con"), summ(m_sta, "mean_stable"), summ(m_exp, "mean_exp"), summ(ce, "ce"),
+    summ(m_con, "mean_con"), summ(m_sta, "mean_stable"), summ(m_exp, "mean_exp"),
     list(cor_low_up = if (!is.null(s_low) && !is.null(s_up)) cor(s_low, s_up) else NA_real_,
          n_draws_used = length(keep))
   ))) %>% mutate(status = "ok")
@@ -163,7 +164,7 @@ process_species <- function(sdm_file) {
   dr <- NULL
   if (save_draws) {
     k <- seq_len(min(n_draws_saved, length(s_all)))
-    dr <- list(slope = s_all[k], slope_low = s_low[k], slope_up = s_up[k], ce = ce[k])
+    dr <- list(slope = s_all[k], slope_low = s_low[k], slope_up = s_up[k])
   }
   list(row = row, draws = dr)
 }
