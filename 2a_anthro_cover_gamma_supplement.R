@@ -12,6 +12,12 @@
 # cover. gamma has a Normal(0, 1) prior.
 #
 # Reports:
+#   0. gamma posterior summaries: gamma's row (mean, median, sd, mad, q5, q95,
+#      rhat, ess_bulk, ess_tail) from every species' anthro *_summ_fit.rds,
+#      plus whole-model convergence (max Rhat / min bulk ESS across every
+#      parameter; converged = Rhat < 1.01 and ESS > 400). The fit files are
+#      large and only exist where the models were fitted, so when rds_dir is
+#      absent the saved table (posterior_csv) is read instead.
 #   1. Covariate variation: how much A differs among routes vs. changes within
 #      routes over 2010-2025 (gamma is identified mostly by the former).
 #   2. Per species: gamma posterior mean, sd, 90% CI (q5/q95), and whether the
@@ -24,13 +30,15 @@
 #   4. Effect on route trends: paired difference in route trend (anthro - base,
 #      %/yr) for every route present in both models, and its relation to gamma.
 #
-# Reads:  output/files/gamma_lookup_all_species_2010_2025.csv
-#           (helper/gamma_lookup.R; needs the *_summ_fit.rds files, so run it
-#           where the fits are stored)
+# Reads:  output/rds/<species>_iCAR_anthro_2010_2025_summ_fit.rds   (1a/1b), if present;
+#           otherwise output/gamma/gamma_posterior_summary_2010_2025.csv
+#         data/spp_names_codes_group_aou.csv   (species list and group)
 #         output/species_routes_covariates/all_route_trends_all_species_anthro_2010_2025.csv
 #           (2_generate_route_trend_csvs_covariates.R)
 #         data/Anthro.csv
-# Writes: output/gamma/gamma_species_2010_2025.csv        one row per species
+# Writes: output/gamma/gamma_posterior_summary_2010_2025.csv  gamma posterior + convergence, one row per species
+#           (only rewritten when the *_summ_fit.rds files are available)
+#         output/gamma/gamma_species_2010_2025.csv        one row per species
 #         output/gamma/gamma_group_summary_2010_2025.csv  one row per group + "All species" (Table S1 and more)
 #         output/gamma/gamma_key_numbers_2010_2025.csv    name/value pairs quoted in the text
 #         output/gamma/figures/gamma_by_group_2010_2025.png      (Fig. S1)
@@ -46,7 +54,8 @@ firstYear <- 2010
 lastYear  <- 2025
 require_route_converged <- TRUE   # same rule as 4c / v1
 
-gamma_csv  <- here::here("output", "files", paste0("gamma_lookup_all_species_", firstYear, "_", lastYear, ".csv"))
+rds_dir    <- here::here("output", "rds")
+spp_csv    <- here::here("data", "spp_names_codes_group_aou.csv")
 routes_csv <- here::here("output", "species_routes_covariates",
                          paste0("all_route_trends_all_species_anthro_", firstYear, "_", lastYear, ".csv"))
 anthro_csv <- here::here("data", "Anthro.csv")
@@ -54,6 +63,7 @@ anthro_csv <- here::here("data", "Anthro.csv")
 out_dir <- here::here("output", "gamma")
 fig_dir <- file.path(out_dir, "figures")
 dir.create(fig_dir, recursive = TRUE, showWarnings = FALSE)
+posterior_csv <- file.path(out_dir, paste0("gamma_posterior_summary_", firstYear, "_", lastYear, ".csv"))
 
 col_pos <- "#2a78d6"   # credible positive
 col_neg <- "#e34948"   # credible negative
@@ -119,11 +129,52 @@ add_key("anthro_within_route_change_abs_q90", quantile(abs(route_cov$change_A), 
 add_key("anthro_pct_routes_increased", 100 * mean(route_cov$change_A > 0))
 
 # 2. Per-species gamma ---------------------------------------------------------
-if (!file.exists(gamma_csv)) {
-  stop("Missing ", gamma_csv, " -- run helper/gamma_lookup.R where the *_summ_fit.rds files are stored.")
+summ_files <- if (dir.exists(rds_dir)) {
+  list.files(rds_dir, pattern = paste0("_iCAR_anthro_", firstYear, "_", lastYear, "_summ_fit\\.rds$"))
+} else character(0)
+
+if (length(summ_files) > 0) {
+  # Species list and group; species listed under two groups keep the first.
+  target_spp <- read.csv(spp_csv, stringsAsFactors = FALSE) %>%
+    filter(in_bbs == TRUE) %>%
+    distinct(Common.Name, Code, .keep_all = TRUE) %>%
+    arrange(Common.Name)
+
+  read_gamma <- function(sp, code, grp) {
+    sp_f <- gsub("'", "", gsub(" ", "_", sp, fixed = TRUE), fixed = TRUE)   # same as species_to_f()
+    f <- file.path(rds_dir, paste0(sp_f, "_iCAR_anthro_", firstYear, "_", lastYear, "_summ_fit.rds"))
+    if (!file.exists(f)) return(NULL)
+    summ <- readRDS(f)
+    g <- summ[summ$variable == "gamma1", ]
+    if (nrow(g) != 1) return(NULL)
+    max_rhat <- suppressWarnings(max(summ$rhat, na.rm = TRUE))
+    min_ess  <- suppressWarnings(min(summ$ess_bulk, na.rm = TRUE))
+    g %>%
+      select(-variable) %>%
+      mutate(species = sp, species_code = code, model = "anthro", group = grp,
+             model_max_rhat = max_rhat, model_min_ess_bulk = min_ess,
+             model_converged = is.finite(max_rhat) && is.finite(min_ess) &&
+               max_rhat < 1.01 && min_ess > 400,
+             .before = 1)
+  }
+
+  cat("Reading gamma from", length(summ_files), "anthro summ_fit.rds files in", rds_dir, "\n")
+  posterior <- bind_rows(pmap(list(target_spp$Common.Name, target_spp$Code, target_spp$Group), read_gamma)) %>%
+    select(any_of(c("species", "species_code", "model", "group", "mean", "median", "sd", "mad",
+                    "q5", "q95", "rhat", "ess_bulk", "ess_tail",
+                    "model_max_rhat", "model_min_ess_bulk", "model_converged")), everything())
+  write.csv(posterior, posterior_csv, row.names = FALSE)
+  cat("Wrote", nrow(posterior), "species to", posterior_csv, "\n")
+} else {
+  if (!file.exists(posterior_csv)) {
+    stop("No *_summ_fit.rds files in ", rds_dir, " and no saved ", posterior_csv,
+         " -- run this script once where the model fits are stored.")
+  }
+  cat("No fit files in", rds_dir, "-- reading saved", posterior_csv, "\n")
+  posterior <- read.csv(posterior_csv, stringsAsFactors = FALSE)
 }
 
-gamma_sp <- read.csv(gamma_csv, stringsAsFactors = FALSE) %>%
+gamma_sp <- posterior %>%
   filter(model == "anthro") %>%
   distinct(species_code, .keep_all = TRUE) %>%
   transmute(species, species_code, group,
