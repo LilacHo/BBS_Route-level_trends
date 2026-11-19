@@ -45,7 +45,7 @@
 ## one whole-model convergence table across all species and tags, including
 ## "base" (Rhat < 1.01 and bulk ESS > 400 required across every parameter).
 ## For gamma1's posterior summary and credibility (90% CI excludes zero)
-## across species, run 2a_anthro_cover_gamma_supplement.R.
+## across species, run s1_gamma.R.
 ##
 ## Requires (sourced below):
 ##   functions/covariate_model_fitting.R

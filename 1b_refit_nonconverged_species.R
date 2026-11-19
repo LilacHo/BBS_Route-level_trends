@@ -19,7 +19,7 @@
 ##           still fails.
 ##
 ## For gamma1's posterior summary on the post-refit fits, run
-## 2a_anthro_cover_gamma_supplement.R.
+## s1_gamma.R.
 ##
 ## Resumable: each species/tag is re-checked right before refitting and
 ## skipped if an earlier interrupted run already fixed it.

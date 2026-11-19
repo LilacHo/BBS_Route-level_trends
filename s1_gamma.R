@@ -1,4 +1,4 @@
-# 2a_anthro_cover_gamma_supplement.R
+# s1_gamma.R
 #
 # Species-level effect of anthropogenic land cover (gamma) from the anthro
 # model, for the Supplementary Information.
@@ -36,6 +36,7 @@
 #         output/species_routes_covariates/all_route_trends_all_species_anthro_2010_2025.csv
 #           (2_generate_route_trend_csvs_covariates.R)
 #         data/Anthro.csv
+# Outputs other than the posterior summary end in _native when native_only = TRUE.
 # Writes: output/gamma/gamma_posterior_summary_2010_2025.csv  gamma posterior + convergence, one row per species
 #           (only rewritten when the *_summ_fit.rds files are available)
 #         output/gamma/gamma_species_2010_2025.csv        one row per species
@@ -47,23 +48,33 @@
 library(here)
 library(tidyverse)
 
-here::i_am("2a_anthro_cover_gamma_supplement.R")
+here::i_am("s1_gamma.R")
 
 # Settings -------------------------------------------------------------------
 firstYear <- 2010
 lastYear  <- 2025
-require_route_converged <- TRUE   # same rule as 4c / v1
+require_route_converged <- TRUE   # same rule as v1
+# TRUE = drop US-RIIS listed non-native species (same rule as 4a); outputs get a
+# "_native" suffix so the all-species tables and figures are kept.
+native_only <- TRUE
 
 rds_dir    <- here::here("output", "rds")
 spp_csv    <- here::here("data", "spp_names_codes_group_aou.csv")
 routes_csv <- here::here("output", "species_routes_covariates",
                          paste0("all_route_trends_all_species_anthro_", firstYear, "_", lastYear, ".csv"))
 anthro_csv <- here::here("data", "Anthro.csv")
+traits_csv <- here::here("data", "spp_names_codes_group_aou_taxa_redlist_diet_migration_invasive.csv")
 
 out_dir <- here::here("output", "gamma")
 fig_dir <- file.path(out_dir, "figures")
 dir.create(fig_dir, recursive = TRUE, showWarnings = FALSE)
 posterior_csv <- file.path(out_dir, paste0("gamma_posterior_summary_", firstYear, "_", lastYear, ".csv"))
+out_tag <- paste0(firstYear, "_", lastYear, if (native_only) "_native" else "")
+
+non_native <- if (native_only) {
+  read.csv(traits_csv, stringsAsFactors = FALSE) %>%
+    filter(in_bbs %in% TRUE, invasive != "Not listed") %>% pull(Code)
+} else character()
 
 col_pos <- "#2a78d6"   # credible positive
 col_neg <- "#e34948"   # credible negative
@@ -185,6 +196,11 @@ gamma_sp <- posterior %>%
                              TRUE    ~ "Not credible"),
             sign = factor(sign, levels = names(sign_cols)),
             pct_change_per_10pp = pct_per_10pp(gamma))
+if (native_only) {
+  cat("Dropping non-native species:", paste(sort(gamma_sp$species[gamma_sp$species_code %in% non_native]), collapse = ", "), "
+")
+  gamma_sp <- gamma_sp %>% filter(!species_code %in% non_native)
+}
 
 n_sp <- nrow(gamma_sp)
 add_key("n_species", n_sp)
@@ -247,7 +263,7 @@ if (require_route_converged) routes <- routes %>% filter(route_converged %in% TR
 # A few rows have no route ID (upstream join gap, also dropped in v1) and
 # can't be paired across models.
 add_key("routes_missing_id_dropped", sum(is.na(routes$route)))
-routes <- routes %>% filter(!is.na(route))
+routes <- routes %>% filter(!is.na(route), !species_code %in% non_native)
 
 paired <- routes %>%
   select(species_code, route, model, trend) %>%
@@ -280,10 +296,10 @@ add_key("species_shift_abs_max", max(abs(sh$mean_trend_shift)))
 add_key("cor_gamma_species_shift", cor(sh$gamma, sh$mean_trend_shift, method = "spearman"))
 
 # Write tables -----------------------------------------------------------------
-write.csv(gamma_sp, file.path(out_dir, paste0("gamma_species_", firstYear, "_", lastYear, ".csv")), row.names = FALSE)
-write.csv(group_summary, file.path(out_dir, paste0("gamma_group_summary_", firstYear, "_", lastYear, ".csv")), row.names = FALSE)
+write.csv(gamma_sp, file.path(out_dir, paste0("gamma_species_", out_tag, ".csv")), row.names = FALSE)
+write.csv(group_summary, file.path(out_dir, paste0("gamma_group_summary_", out_tag, ".csv")), row.names = FALSE)
 key_df <- tibble(name = names(key), value = unlist(key))
-write.csv(key_df, file.path(out_dir, paste0("gamma_key_numbers_", firstYear, "_", lastYear, ".csv")), row.names = FALSE)
+write.csv(key_df, file.path(out_dir, paste0("gamma_key_numbers_", out_tag, ".csv")), row.names = FALSE)
 
 # Fig. S1: gamma by habitat group -------------------------------------------------
 fig1_drop_groups <- c("arctic")   # single species; still in the tables
@@ -315,7 +331,7 @@ fig1 <- ggplot() +
   theme(panel.grid.minor = element_blank(), panel.grid.major.y = element_blank(),
         legend.position = "top")
 
-ggsave(file.path(fig_dir, paste0("gamma_by_group_", firstYear, "_", lastYear, ".png")),
+ggsave(file.path(fig_dir, paste0("gamma_by_group_", out_tag, ".png")),
        fig1, width = 8, height = 6.2, dpi = 300, device = ragg::agg_png, bg = "white")
 
 # Fig. S2: route-level trend shift (anthro - base) ------------------------------------
@@ -329,7 +345,7 @@ fig2 <- ggplot(paired %>% filter(abs(diff) <= lim), aes(x = diff)) +
   theme_minimal(base_size = 11) +
   theme(panel.grid.minor = element_blank())
 
-ggsave(file.path(fig_dir, paste0("gamma_trend_shift_", firstYear, "_", lastYear, ".png")),
+ggsave(file.path(fig_dir, paste0("gamma_trend_shift_", out_tag, ".png")),
        fig2, width = 7, height = 4, dpi = 300, device = ragg::agg_png, bg = "white")
 
 # Console summary ---------------------------------------------------------------------
