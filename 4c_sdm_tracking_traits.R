@@ -1,8 +1,8 @@
-# 4b_sdm_tracking_stage2_bayes.R
+# 4c_sdm_tracking_traits.R
 #
 # Stage 2 of the Bayesian "SDM tracking" analysis: a hierarchical Bayesian
 # random-effects meta-analysis of the per-species quantities produced by stage 1
-# (4a_sdm_tracking_stage1_draws.R). Fast: one row per species. Runs anywhere.
+# (4b_sdm_tracking_species.R). Fast: one row per species. Runs anywhere.
 #
 # Question: does SDM-projected habitat-suitability change track observed
 # population trends, and for which species / groups does it not?
@@ -27,10 +27,10 @@
 #                    order + family | diet (8) | migration, Red List (3), invasive (US-RIIS): fixed effects
 #   worsening-side slope (classes 1-4) and improving-side slope (classes 4-7): overall
 #
-# Reads:  output/files/sdm_tracking/sdm_tracking_stage1_species_<tag>_<scenario>_<firstYear>_<lastYear>.csv
+# Reads:  output/sdm_tracking/sdm_tracking_stage1_species_<tag>_<scenario>_<firstYear>_<lastYear>.csv
 #         data/spp_names_codes_group_aou_taxa_redlist_diet_migration_invasive.csv  (traits)
 #         models/sdm_tracking_meta.stan
-# Writes (output/files/sdm_tracking/):
+# Writes (output/sdm_tracking/):
 #   sdm_tracking_stage2_SUMMARY_<suffix>.txt   <- the file to read / share; all key numbers
 #   sdm_tracking_stage2_models_<suffix>.csv    one row per model: mu, tau, sigmas, LOO, diagnostics
 #   sdm_tracking_stage2_groups_<suffix>.csv    one row per model x group level
@@ -44,19 +44,24 @@ library(cmdstanr)
 library(posterior)
 library(loo)
 
-here::i_am("4b_sdm_tracking_stage2_bayes.R")
+here::i_am("4c_sdm_tracking_traits.R")
 
 # Settings -------------------------------------------------------------------
 model_tag <- "anthro"; scenario <- "rcp45"; firstYear <- 2010; lastYear <- 2025
-# Must match exclude_classes in 4a_sdm_tracking_stage1_draws.R: integer(0) = main analysis,
+# Must match exclude_classes in 4b_sdm_tracking_species.R: integer(0) = main analysis,
 # c(7) = colonization excluded (reads and writes files tagged "_no7").
 exclude_classes <- integer(0)
 run_tag <- if (length(exclude_classes) > 0) paste0("_no", paste(sort(exclude_classes), collapse = "")) else ""
-suffix <- paste0(paste(model_tag, scenario, firstYear, lastYear, sep = "_"), run_tag)
-stage1_csv <- here::here("output", "files", "sdm_tracking", paste0("sdm_tracking_stage1_species_", suffix, ".csv"))
+# TRUE = drop US-RIIS listed non-native species (Established / Widespread invasive) and the
+# invasive-status trait model; outputs get a "_native" tag. Stage 1 is computed species by
+# species with a fixed seed, so the main stage-1 file is filtered here rather than re-run.
+native_only <- TRUE
+stage1_suffix <- paste0(paste(model_tag, scenario, firstYear, lastYear, sep = "_"), run_tag)
+suffix <- paste0(stage1_suffix, if (native_only) "_native" else "")
+stage1_csv <- here::here("output", "sdm_tracking", paste0("sdm_tracking_stage1_species_", stage1_suffix, ".csv"))
 traits_csv <- here::here("data", "spp_names_codes_group_aou_taxa_redlist_diet_migration_invasive.csv")
 stan_file  <- here::here("models", "sdm_tracking_meta.stan")
-out_dir    <- here::here("output", "files", "sdm_tracking")
+out_dir    <- here::here("output", "sdm_tracking")
 
 class_threshold <- 0.90   # posterior probability needed to call a species/group Tracks or Contrary
 prior_scale_slope <- 1    # %/yr per class step (observed scale ~0.2)
@@ -80,6 +85,11 @@ traits <- read.csv(traits_csv, stringsAsFactors = FALSE) %>%
                                 TRUE ~ redlistCategory),
             invasive = if_else(invasive == "Not listed", "Native (not listed)", invasive))
 d_all <- stage1 %>% left_join(traits, by = "species_code")
+if (native_only) {
+  dropped <- d_all %>% filter(invasive != "Native (not listed)")
+  cat("Dropping", nrow(dropped), "non-native species:", paste(sort(dropped$species), collapse = ", "), "\n")
+  d_all <- d_all %>% filter(invasive == "Native (not listed)")
+}
 
 mod <- cmdstan_model(stan_file)
 
@@ -190,6 +200,7 @@ specs <- list(
   list("Red List (3)",        "redlist",   NULL,     0, 0, 1),
   list("Invasive (US-RIIS)",  "invasive",  NULL,     0, 0, 1)
 )
+if (native_only) specs <- Filter(function(s) s[[1]] != "Invasive (US-RIIS)", specs)
 fits <- list(); rows <- list(); loos <- list(); groups <- list()
 for (s in specs) {
   cat("Fitting:", s[[1]], "\n")
@@ -317,7 +328,7 @@ for (r in seq_len(nrow(mt))) {
 }
 w("")
 w("== 5. GROUP-LEVEL SLOPES (mu + group effect) ==")
-for (nm in c("Habitat group", "Diet (8)", "Migration", "Red List (3)", "Invasive (US-RIIS)", "Family")) {
+for (nm in intersect(c("Habitat group", "Diet (8)", "Migration", "Red List (3)", "Invasive (US-RIIS)", "Family"), names(fits))) {
   gt <- groups_out %>% filter(model == nm, grouping == "g1") %>% arrange(desc(mean))
   if (nm == "Family") gt <- gt %>% filter(n_species >= 5)
   w("-- ", nm, if (nm == "Family") " (families with >= 5 species)" else "", " --")
