@@ -1,17 +1,25 @@
-# 6_visualization_publishable.R
+# vf1_route_trend_map.R
 #
+# Figure 1: map of BBS routes coloured by the average population trend of the
+# native species modelled on each route (anthro model, converged routes); point
+# size = number of species modelled on the route.
+#
+# Reads:  output/species_routes_covariates/all_route_trends_all_species_<model>_<years>.csv  (step 2)
+#         data/spp_names_codes_group_aou_taxa_redlist_diet_migration_invasive.csv  (non-native list)
+# Writes: output/figures/figure1.{png,pdf}
+
 library(here)
 library(tidyverse)
 library(sf)
 
-here::i_am("6_visualization_publishable.R")
+here::i_am("vf1_route_trend_map.R")
 
 # Settings -------------------------------------------------------------------
 firstYear <- 2010
 lastYear  <- 2025
 model_tag <- "anthro"   # which fit's route set to map ("base" or "anthro")
 
-# Same rule as v1/4c: only count route x species rows whose route-level
+# Same rule as v1: only count route x species rows whose route-level
 # parameters converged.
 require_route_converged <- TRUE
 
@@ -98,8 +106,11 @@ map_coord <- coord_sf(crs = map_crs, default_crs = map_crs, xlim = xlim, ylim = 
 
 save_fig <- function(p, stem) {
   p <- p + map_coord
-  ggsave(file.path(out_dir, paste0(stem, ".png")),
-         p, width = fig_width, height = fig_height, dpi = fig_dpi)
+  for (ext in c("png", "pdf")) {
+    out_file <- file.path(out_dir, paste0(stem, ".", ext))
+    ggsave(out_file, p, width = fig_width, height = fig_height, dpi = fig_dpi)
+    cat("Saved:", out_file, "\n")
+  }
 }
 
 # Fig 1: routes, size = species, colour = average trend ---------------------
