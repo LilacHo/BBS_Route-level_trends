@@ -23,8 +23,8 @@
 #           (step 3; species, group, route coords, trend, trend_lci/uci, route_converged)
 #         data/rcp{45,85}_<group>/<code>/<group>_<code>_breeding_2025_{45,85}_ENSEMBLE_classifiedchange.tif
 #         bbsBayes2's "prov_state" map + spData::world for the base map
-# Writes: output/species_maps/<model>/<scenario>/<species>_<model>_<scenario>_<firstYear>_<lastYear>.png
-#         output/species_maps/map_manifest_<firstYear>_<lastYear>.csv (one row per map attempted)
+# Writes: output/visualizations/species_maps/<model>/<scenario>/<species>_<model>_<scenario>_<firstYear>_<lastYear>.png
+#         output/visualizations/species_maps/map_manifest_<firstYear>_<lastYear>.csv (one row per map attempted)
 #
 # Resumable like 1a: a map that already exists is skipped unless
 # overwrite = TRUE, so this can be stopped and restarted. A species whose
@@ -51,7 +51,7 @@ only_species <- NULL
 
 overwrite <- FALSE
 
-# Same rule as 4c: drop routes whose own alpha_raw/beta_raw_space didn't converge.
+# Drop routes whose own alpha_raw/beta_raw_space didn't converge (route_converged, step 2).
 require_route_converged <- TRUE
 
 # Point size is |annual % change| squished into [0, size_limit] so sizes are
@@ -82,7 +82,7 @@ fig_width <- 10   # inches; height follows the plotted extent's aspect ratio
 fig_dpi   <- 300
 
 sdm_dir <- here::here("output", "species_routes_covariates", "per_species_sdm")
-out_dir <- here::here("output", "species_maps")
+out_dir <- here::here("output", "visualizations", "species_maps")
 
 # Colours ---------------------------------------------------------------------
 shift_cols <- c("Decreasing suitability" = "#FF7F00", "Neutral" = "#FFFF99", "Increasing suitability" = "#19B2FF")

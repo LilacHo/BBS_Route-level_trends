@@ -1,41 +1,33 @@
-# 6a_species_trend_distributions.R
+# v3_species_trend_distributions.R
 #
 # One "raincloud" figure per species x model (base / anthro) x climate
 # scenario (RCP 4.5 / RCP 8.5): for every route belonging to that species,
 # pulls its population trend and its SDM range-shift category (Decreasing suitability /
-# Stable / Increasing suitability, from the same classified-change raster values 3d's
+# Neutral / Increasing suitability, from the same classified-change raster values v1's
 # maps use), then shows:
-#   - a density curve of route trend PER category (Decreasing suitability / Stable /
+#   - a density curve of route trend PER category (Decreasing suitability / Neutral /
 #     Increasing suitability), filled with the same area colors as
-#     3d_visualization_map.R's range-shift maps, so this figure and that map
+#     v1_species_map.R's range-shift maps, so this figure and that map
 #     read as one system;
-#   - a dashed grey OUTLINE-ONLY density behind all three, for every
-#     categorized route regardless of category (the species' overall trend
-#     distribution, deliberately drawn with no fill so it never competes
-#     with the three colored areas);
+#   - a dashed grey outline-only density of every categorized route (the
+#     species' overall trend distribution);
 #   - a jittered strip of individual route trends below the curves, one row
 #     per category, colored the same way;
-#   - a black open ring on any route whose OWN 90% credible interval
-#     (trend_lci/trend_uci) excludes zero -- same "still significant" ring
-#     convention 5b_refugia_hotspot_stats.R uses for FDR-significant
-#     hotspots, applied here to route-level credibility instead;
+#   - a black open ring on any route whose own 90% credible interval
+#     (trend_lci/trend_uci) excludes zero;
 #   - a filled triangle at each category's mean trend.
 #
-# Companion to 3d_visualization_map.R (same category colors, same route
-# trend/credible-interval source) and 4c_statistical_analysis_and_visualization_covariates.R
-# (same Decreasing suitability/Stable/Increasing suitability grouping and per-species scope) -- this
-# figure is the "pull every route's trend out of the map and look at its
-# distribution" complement to 3d's spatial view.
+# The non-spatial complement to v1's maps.
 #
 # Reads:  output/species_routes_covariates/per_species_sdm/*_route_trends_sdm.csv
-#           (3c; species, group, model, route, trend, trend_lci/uci,
+#           (step 3; species, group, model, route, trend, trend_lci/uci,
 #           route_converged, rcp45, rcp85 -- rcp45/rcp85 are the raw 0-7
 #           classified-change raster codes at that route's location)
-# Writes: output/species_trend_distributions/<model>/<scenario>/<species>_<model>_<scenario>_<firstYear>_<lastYear>.png
-#         output/species_trend_distributions/manifest_<firstYear>_<lastYear>.csv
+# Writes: output/visualizations/species_trend_distributions/<model>/<scenario>/<species>_<model>_<scenario>_<firstYear>_<lastYear>.png
+#         output/visualizations/species_trend_distributions/manifest_<firstYear>_<lastYear>.csv
 #           (one row per species/model/scenario attempted)
 #
-# Resumable like 3d: a plot that already exists is skipped unless
+# Resumable like v1: a plot that already exists is skipped unless
 # overwrite = TRUE. A species/model/scenario with fewer than
 # min_routes_per_plot categorized routes is skipped (not enough data for a
 # meaningful density) with a note in the manifest, not a fatal error.
@@ -43,7 +35,7 @@
 library(here)
 library(tidyverse)
 
-here::i_am("6a_species_trend_distributions.R")
+here::i_am("v3_species_trend_distributions.R")
 
 # Settings -------------------------------------------------------------------
 firstYear <- 2010
@@ -58,11 +50,11 @@ only_species <- NULL
 
 overwrite <- FALSE
 
-# Same rule as 3d/4c: drop routes whose own alpha_raw/beta_raw_space didn't converge.
+# Same rule as v1: drop routes whose own alpha_raw/beta_raw_space didn't converge.
 require_route_converged <- TRUE
 
 # Skip a species/model/scenario combo with fewer than this many categorized
-# (Decreasing suitability/Stable/Increasing suitability) routes -- not enough data for a meaningful
+# (Decreasing suitability/Neutral/Increasing suitability) routes -- not enough data for a meaningful
 # density curve.
 min_routes_per_plot <- 5
 
@@ -71,25 +63,22 @@ fig_height <- 6.5
 fig_dpi    <- 200
 
 sdm_dir <- here::here("output", "species_routes_covariates", "per_species_sdm")
-out_dir <- here::here("output", "species_trend_distributions")
+out_dir <- here::here("output", "visualizations", "species_trend_distributions")
 
 # Colours ---------------------------------------------------------------------
-# Fill = exactly 3d_visualization_map.R's shift_cols, so this figure and the
-# range-shift maps read as one system. Border/point/label/mean-triangle
-# colors are manually darkened versions of the same hue -- Stable's map
-# fill (#FFFF99) is a near-invisible pale yellow as a line/point/text color
-# on a white background, so it needs a distinctly darker gold rather than a
-# generic darkening formula.
-shift_cols        <- c(`Decreasing suitability` = "#FF7F00", Stable = "#FFFF99", `Increasing suitability` = "#19B2FF")
-shift_border_cols <- c(`Decreasing suitability` = "#B35900", Stable = "#999900", `Increasing suitability` = "#0F6E9C")
-cat_levels <- c("Decreasing suitability", "Stable", "Increasing suitability")
+# Fill = v1_species_map.R's shift_cols. Border/point/label colors are
+# hand-darkened versions (Neutral's pale #FFFF99 is invisible as a line color
+# on white).
+shift_cols        <- c(`Decreasing suitability` = "#FF7F00", Neutral = "#FFFF99", `Increasing suitability` = "#19B2FF")
+shift_border_cols <- c(`Decreasing suitability` = "#B35900", Neutral = "#999900", `Increasing suitability` = "#0F6E9C")
+cat_levels <- c("Decreasing suitability", "Neutral", "Increasing suitability")
 
-# Raster value -> range-shift class, same grouping as 3d/4c:
-# Decreasing suitability = 1,2,3 | Stable = 4 | Increasing suitability = 5,6,7 (0 = never suitable, excluded).
+# Raster value -> range-shift class, same grouping as v1:
+# Decreasing suitability = 1,2,3 | Neutral = 4 | Increasing suitability = 5,6,7 (0 = never suitable, excluded).
 group_category <- function(x) {
   dplyr::case_when(
     x %in% c(1, 2, 3) ~ "Decreasing suitability",
-    x == 4            ~ "Stable",
+    x == 4            ~ "Neutral",
     x %in% c(5, 6, 7) ~ "Increasing suitability",
     TRUE              ~ NA_character_
   )
@@ -105,7 +94,7 @@ safe_density <- function(x) {
 # Load route trend tables ------------------------------------------------------
 sdm_files <- list.files(sdm_dir, pattern = "_route_trends_sdm\\.csv$", full.names = TRUE)
 if (length(sdm_files) == 0) {
-  stop("No *_route_trends_sdm.csv files in ", sdm_dir, " -- run 3c_add_SDM_covariates.R first.")
+  stop("No *_route_trends_sdm.csv files in ", sdm_dir, " -- run 3_add_SDM_covariates.R first.")
 }
 
 trends <- map_dfr(sdm_files, function(f) {
@@ -139,7 +128,7 @@ cat("Species to plot:", length(species_slugs), "| models:", paste(models, collap
 
 # Plot builder -----------------------------------------------------------------
 # df must already have one row per route with: trend, credible, category
-# (Decreasing suitability/Stable/Increasing suitability factor, NA rows already dropped).
+# (Decreasing suitability/Neutral/Increasing suitability factor, NA rows already dropped).
 plot_species_distribution <- function(df, sp_name, model, scenario_label) {
   dens_all <- safe_density(df$trend)
 
@@ -175,13 +164,13 @@ plot_species_distribution <- function(df, sp_name, model, scenario_label) {
 
   p <- ggplot()
 
-  # Category densities (Stable, then Decreasing suitability, then Increasing suitability so the
-  # narrower/more-saturated colors sit on top of the broader Stable fill).
-  for (lv in intersect(c("Stable", "Decreasing suitability", "Increasing suitability"), present)) {
+  # Category densities (Neutral, then Decreasing suitability, then Increasing suitability so the
+  # narrower/more-saturated colors sit on top of the broader Neutral fill).
+  for (lv in intersect(c("Neutral", "Decreasing suitability", "Increasing suitability"), present)) {
     if (!is.null(cat_dens[[lv]])) {
       p <- p + geom_density(data = cat_dfs[[lv]], aes(x = trend), inherit.aes = FALSE,
                             fill = shift_cols[[lv]], color = shift_border_cols[[lv]],
-                            alpha = if (lv == "Stable") 0.30 else 0.40, linewidth = 0.7)
+                            alpha = if (lv == "Neutral") 0.30 else 0.40, linewidth = 0.7)
     }
   }
 
@@ -277,7 +266,7 @@ for (sp in species_slugs) {
     n_counts <- table(factor(df$category, levels = cat_levels))
 
     if (nrow(df) < min_routes_per_plot) {
-      add_manifest(sp, m, sc, nrow(df), n_counts[["Decreasing suitability"]], n_counts[["Stable"]],
+      add_manifest(sp, m, sc, nrow(df), n_counts[["Decreasing suitability"]], n_counts[["Neutral"]],
                   n_counts[["Increasing suitability"]], "too_few_routes")
       next
     }
@@ -292,7 +281,7 @@ for (sp in species_slugs) {
       message("WARNING: ", sp, " ", m, " ", sc, " -- plot failed: ", conditionMessage(e))
       "error"
     })
-    add_manifest(sp, m, sc, nrow(df), n_counts[["Decreasing suitability"]], n_counts[["Stable"]],
+    add_manifest(sp, m, sc, nrow(df), n_counts[["Decreasing suitability"]], n_counts[["Neutral"]],
                 n_counts[["Increasing suitability"]], status)
     if (status == "ok") cat("  Wrote:", basename(out_file), "\n")
   }

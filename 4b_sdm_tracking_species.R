@@ -15,7 +15,9 @@
 #      (classes 4-7) of the gradient, for species with >= 2 classes on that half;
 #   4. CATEGORY MEANS: the mean trend of the species' routes in each range-change
 #      category (Decreasing suitability = 1-3, Neutral = 4, Increasing suitability = 5-7),
-#      for the categories in which the species has routes.
+#      for the categories in which the species has routes;
+#   5. CLASS MEANS: the same mean trend for each single SDM class 1-7 (for Figure 2's
+#      per-class estimates and intervals).
 # Each quantity is then summarized across draws by its mean (y) and SD (se), the
 # inputs to the meta-analysis in 4c. Because the draws are joint across routes,
 # se carries both each route's trend uncertainty and the spatial (iCAR)
@@ -38,7 +40,8 @@
 # Writes: output/sdm_tracking/sdm_tracking_stage1_species_<suffix>.csv
 #           one row per species: status, route counts per class and category, and for
 #           each quantity its posterior mean, sd, 2.5% / 97.5% quantiles and P(> 0):
-#           slope_*, slope_low_*, slope_up_*, mean_decreasing_*, mean_neutral_*, mean_increasing_*
+#           slope_*, slope_low_*, slope_up_*, mean_decreasing_*, mean_neutral_*, mean_increasing_*,
+#           mean_class1_* ... mean_class7_*
 #         output/sdm_tracking/sdm_tracking_stage1_draws_<suffix>.rds   (optional, save_draws)
 #         output/sdm_tracking/sdm_tracking_stage1_log_<suffix>.txt
 #
@@ -154,16 +157,19 @@ process_species <- function(sdm_file) {
   s_low <- if (n_distinct(x[low]) >= 2) slope_draws(Y[, low, drop = FALSE], x[low]) else NULL
   s_up  <- if (n_distinct(x[up])  >= 2) slope_draws(Y[, up,  drop = FALSE], x[up])  else NULL
 
-  # Category means, in every draw
-  m_cat <- map(categories, function(cls) {
+  # Category means and single-class means, in every draw
+  draw_mean <- function(cls) {
     idx <- sdm$cls %in% cls
     if (any(idx)) rowMeans(Y[, idx, drop = FALSE]) else NULL
-  })
+  }
+  m_cat   <- map(categories, draw_mean)
+  m_class <- map(1:7, draw_mean)
 
   row <- bind_cols(base, as_tibble(c(
     summ(s_all, "slope"), summ(s_low, "slope_low"), summ(s_up, "slope_up"),
     summ(m_cat$decreasing, "mean_decreasing"), summ(m_cat$neutral, "mean_neutral"),
     summ(m_cat$increasing, "mean_increasing"),
+    unlist(map(1:7, ~ summ(m_class[[.x]], paste0("mean_class", .x))), recursive = FALSE),
     list(cor_low_up = if (!is.null(s_low) && !is.null(s_up)) cor(s_low, s_up) else NA_real_,
          n_draws_used = length(keep))
   ))) %>% mutate(status = "ok")
@@ -187,8 +193,8 @@ done <- character()
 results <- list(); draws_out <- list()
 if (file.exists(out_csv)) {
   prev <- read.csv(out_csv, stringsAsFactors = FALSE)
-  if (!"mean_neutral_mean" %in% names(prev)) {
-    log_msg("Existing ", basename(out_csv), " has no category means (older version): recomputing all species")
+  if (!all(c("mean_neutral_mean", "mean_class1_mean") %in% names(prev))) {
+    log_msg("Existing ", basename(out_csv), " has no category / class means (older version): recomputing all species")
   } else {
     results <- split(prev, seq_len(nrow(prev))) %>% map(as_tibble)
     done <- prev$species[prev$status == "ok"]

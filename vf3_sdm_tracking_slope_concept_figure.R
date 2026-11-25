@@ -7,7 +7,7 @@
 #     A  Tracks          B  Inconclusive          C  Contrary
 #   Row 2 - the Inconclusive species split by their range-change CATEGORY means
 #           (Decreasing suitability = classes 1-3, Neutral = 4, Increasing suitability = 5-7):
-#     D  step up from Decreasing to Neutral      (trends lower where suitability declines)
+#     D  Decreasing below Neutral                (trends lower where suitability declines)
 #     E  step up from Neutral to Increasing      (trends higher where suitability improves)
 #     F  no clear step up                        (optional, show_panel_f)
 #
@@ -25,23 +25,27 @@
 # Colours, in every panel: the classification of THAT line with the same rule as the
 # stage-2 classes (class_threshold): blue if P(> 0) >= threshold, red if P(< 0) >= threshold,
 # otherwise charcoal (dashed for the row-2 steps). Row 1 uses the stage-2 Student-t class of the
-# species. The row-2 steps use  Neutral - Decreasing  and  Increasing - Neutral,  with mean =
+# species. Panel titles give only the subgroup (with its species count) and the example
+# species; there is no caption (write it in the manuscript). Each step line is coloured by its
+# direction left to right (Neutral - Decreasing, Increasing - Neutral), with mean =
 # difference of the stage-1 category means and sd = sqrt(sd1^2 + sd2^2) (normal
 # approximation treating the two means as independent, as in 4c's "... - Neutral" models;
 # the joint draws are not saved by 4b). The step that defines the subgroup is shaded.
 #
 # Subgroups in row 2 (counted over the native Inconclusive species; titles show n):
-#   D: P(Neutral - Decreasing > 0) >= class_threshold
+#   D: P(Decreasing - Neutral < 0) >= class_threshold
 #   E: P(Increasing - Neutral > 0) >= class_threshold
 #   F: neither (includes flat species, species with a step down, and species missing a category)
 #
-# Both rows share one facet_wrap with free x scales: row 1 sits at x = 1..7 (classes) and
-# row 2 at x = 11..13 (categories), so each panel keeps only its own axis labels.
+# The two rows are drawn as separate plots (x title "SDM class" under A-C, "Range-change
+# category" under D-F) and stacked with gridExtra, with one shared y title. Row 1 sits at
+# x = 1..7 (classes) and row 2 at x = 11..13 (categories).
 #
 # Inputs:
 #   output/species_routes_covariates/per_species_sdm/<Species>_<model_tag>_route_trends_sdm.csv
 #   output/sdm_tracking/sdm_tracking_stage1_species_<suffix>.csv
 #   output/sdm_tracking/sdm_tracking_stage2_species_<suffix>_native.csv
+#   data/spp_names_codes_group_aou_taxa_redlist_diet_migration_invasive.csv  (scientific names)
 # Output:
 #   output/figures/figure3.{png,pdf}
 
@@ -64,12 +68,13 @@ class_threshold <- 0.90   # same as 4c
 #   Inconclusive: Baltimore Oriole (flat overall and between categories: -2.20 / -2.19 / -2.36;
 #                 118 / 855 / 298 routes). Alternatives: Scarlet Tanager, Cooper's Hawk.
 #   Contrary:     White-breasted Nuthatch
-#   D (Neutral above Decreasing, Increasing flat): Black-and-white Warbler (166 / 296 / 130
+#   D (Decreasing below Neutral, Increasing flat): Black-and-white Warbler (166 / 296 / 130
 #                 routes; step +1.0, P = 0.95). Alternatives: Ring-billed Gull (step +6.6 but
 #                 very wide spread), Acadian Flycatcher (only 9 routes in classes 1-2).
-#   E (Increasing above Neutral, Decreasing flat): Cedar Waxwing (456 / 1,028 / 25 routes).
-#                 Alternatives: Hooded Warbler, Double-crested Cormorant; Wood Thrush and
-#                 Common Yellowthroat also step up but are valleys (Decreasing above Neutral).
+#   E (Increasing above Neutral): Wood Thrush (249 / 966 / 247 routes; step +2.64, 95% CI above 0).
+#                 It is a valley (Decreasing also above Neutral), but every species that is flat
+#                 and then steps up has <= 40 Increasing routes (Cedar Waxwing 25, Hooded Warbler
+#                 38). Alternatives: Rose-breasted Grosbeak (small steps), Common Grackle (deeper valley).
 #   F (no clear step up): same species as panel B, so F reads as "B split by category"
 panels <- tribble(
   ~id, ~species,                  ~kind,
@@ -77,7 +82,7 @@ panels <- tribble(
   "B", "Baltimore Oriole",        "overall",
   "C", "White-breasted Nuthatch", "overall",
   "D", "Black-and-white Warbler", "step_dn",
-  "E", "Cedar Waxwing",           "step_in",
+  "E", "Wood Thrush",             "step_in",
   "F", "Baltimore Oriole",        "step_none"
 )
 show_panel_f <- TRUE
@@ -90,10 +95,11 @@ shade_colour  <- "#2a78d6"    # background of the step that defines the row-2 su
 # row-2 categories: x position (offset so the two rows never share axis breaks) and axis label
 categories <- tibble(cat   = c("decreasing", "neutral", "increasing"),
                      x     = c(11, 12, 13),
-                     label = c("Decreasing\n(1–3)", "Neutral\n(4)", "Increasing\n(5–7)"))
+                     label = c("Decreasing\nsuitability\n(1–3)", "Neutral\n\n(4)", "Increasing\nsuitability\n(5–7)"))
 
 route_dir <- here::here("output", "species_routes_covariates", "per_species_sdm")
 track_dir <- here::here("output", "sdm_tracking")
+traits_csv <- here::here("data", "spp_names_codes_group_aou_taxa_redlist_diet_migration_invasive.csv")   # scientific names
 fig_dir   <- here::here("output", "figures")
 fig_stem  <- "figure3"
 if (!dir.exists(fig_dir)) dir.create(fig_dir, recursive = TRUE)
@@ -132,7 +138,7 @@ n_group <- c(Tracks       = sum(spp$label == "Tracks"),
 n_both <- sum(inc$dn_up & inc$in_up)
 cat(sprintf("Native species: %d Tracks, %d Inconclusive, %d Contrary\n",
             n_group[["Tracks"]], n_group[["Inconclusive"]], n_group[["Contrary"]]))
-cat(sprintf("Inconclusive: %d Neutral > Decreasing, %d Increasing > Neutral (%d both), %d neither\n",
+cat(sprintf("Inconclusive: %d Decreasing < Neutral, %d Increasing > Neutral (%d both), %d neither\n",
             n_group[["step_dn"]], n_group[["step_in"]], n_both, n_group[["step_none"]]))
 
 # file names use the species name with spaces -> "_" and apostrophes dropped
@@ -157,15 +163,28 @@ if (any(is.na(info$label))) stop("Not in the stage-2 (native) output: ", paste(i
 info <- info %>%
   mutate(head = case_when(
            kind == "overall"   ~ paste0(id, "  ", label, " (", n_group[label], " species)"),
-           kind == "step_dn"   ~ paste0(id, "  Inconclusive: Neutral above Decreasing (", n_group[["step_dn"]], ")"),
+           kind == "step_dn"   ~ paste0(id, "  Inconclusive: Decreasing below Neutral (", n_group[["step_dn"]], ")"),
            kind == "step_in"   ~ paste0(id, "  Inconclusive: Increasing above Neutral (", n_group[["step_in"]], ")"),
            kind == "step_none" ~ paste0(id, "  Inconclusive: no clear step up (", n_group[["step_none"]], ")")),
-         body = if_else(kind == "overall",
-                        paste0(species, "\nslope 1–7  ", ci(slope_mean, slope_q025, slope_q975)),
-                        paste0(species, "\nNeutral − Decreasing  ", ci_n(dn_mean, dn_sd),
-                               "\nIncreasing − Neutral  ", ci_n(in_mean, in_sd))),
-         panel = paste0(head, "\n", body))
+         panel = paste0(head, "\n", species))   # panel title: subgroup and example species only
 info$panel <- factor(info$panel, levels = info$panel)
+
+# Strip labels as plotmath: line 1 = subgroup, line 2 = "Common Name (Scientific name)" with the
+# BBS (bbsBayes2) scientific name in italics, from the genus / species columns of traits_csv.
+sci <- read_csv(traits_csv, show_col_types = FALSE) %>%
+  filter(in_bbs %in% TRUE) %>%
+  transmute(sci_name = paste(genus, species), species = Common.Name)
+info <- info %>% left_join(sci, by = "species")
+if (any(is.na(info$sci_name))) stop("No scientific name for: ", paste(info$species[is.na(info$sci_name)], collapse = ", "))
+q <- function(s) paste0('"', gsub('"', '\\\\"', s), '"')   # quote a string for plotmath
+strip_l1 <- setNames(paste0("bold(", q(info$head), ")"), as.character(info$panel))
+strip_l2 <- setNames(paste0("bold(", q(paste0(info$species, " (")), ") * bolditalic(", q(info$sci_name), ") * bold(", q(")"), ")"),
+                     as.character(info$panel))
+strip_labeller <- function(labels) {
+  p <- as.character(labels$panel)
+  list(lapply(strip_l1[p], function(e) c(parse(text = e))),
+       lapply(strip_l2[p], function(e) c(parse(text = e))))
+}
 
 # every route once per panel; row-1 panels use the class (x = 1..7), row-2 panels the category (x = 11..13)
 routes <- panels %>% select(id, species, kind) %>%
@@ -225,19 +244,9 @@ x_labels <- c(as.character(1:7), categories$label)
 
 
 # ---- plot ----
-make_plot <- function(ids, nrow, title_size = 12.5) {
+# One row of panels; each row gets its own x-axis title (SDM class / range-change category).
+make_plot <- function(ids, nrow, x_title, title_size = 12.5) {
   keep <- function(d) d %>% filter(panel %in% info$panel[info$id %in% ids])
-  cut  <- n_cut %>% filter(id %in% ids) %>% distinct(species, n)
-  cut_txt <- paste0("Routes outside ", y_lim[1], " to +", y_lim[2], " %/yr are cut off (",
-                    paste0(cut$species, " ", cut$n, collapse = ", "), ").")
-  caption <- paste0(
-    "Violins: route trends (posterior means), by SDM class (A–C) or pooled by range-change category (D–F: Decreasing suitability = classes 1–3, ",
-    "Neutral = 4, Increasing suitability = 5–7); numbers above the violins: routes.\n",
-    "A–C: black ticks = class means; line = stage-1 tracking slope over classes 1–7, shaded fan = slopes within its 95% credible interval; ",
-    "colour = species class from the stage-2 Student-t model.\n",
-    "D–F: black ticks and bars = category means with 95% credible intervals (stage 1); lines = steps between categories.\n",
-    "Colour: blue = increase, red = decrease, charcoal (dashed in D–F) = inconclusive, at posterior probability >= ", class_threshold,
-    ". Shaded background: the step that defines the subgroup. Species counts: native species.\n", cut_txt)
   ggplot() +
     geom_blank(data = keep(x_range), aes(x = x)) +
     geom_rect(data = keep(shade), aes(xmin = xmin, xmax = xmax, ymin = -Inf, ymax = Inf), fill = shade_colour, alpha = 0.06) +
@@ -257,22 +266,20 @@ make_plot <- function(ids, nrow, title_size = 12.5) {
     geom_errorbar(data = keep(cat_means), aes(x = x, ymin = q025, ymax = q975), width = 0, linewidth = 0.7, colour = "black") +
     geom_segment(data = keep(cat_means), aes(x = x - 0.22, xend = x + 0.22, y = mean, yend = mean),
                  linewidth = 0.9, colour = "black", lineend = "round") +
-    # routes per class / category on top of the violins (as in Figure 2), in a white strip above
-    # y_lim[2] so they never overlap data; a top sec.axis like Figure 2's can't differ between facets
-    annotate("rect", xmin = -Inf, xmax = Inf, ymin = y_lim[2] + 0.03 * diff(y_lim), ymax = Inf, fill = "white", colour = "white") +
-    geom_text(data = keep(group_stats), aes(x = x, y = y_lim[2] + 0.085 * diff(y_lim),
+    # routes per class / category below the violins, in a white strip under y_lim[1] so they
+    # never overlap data (the strip also hides violin tails cut off below y_lim[1])
+    annotate("rect", xmin = -Inf, xmax = Inf, ymin = -Inf, ymax = y_lim[1] - 0.03 * diff(y_lim), fill = "white", colour = "white") +
+    geom_text(data = keep(group_stats), aes(x = x, y = y_lim[1] - 0.085 * diff(y_lim),
                                             label = format(n, big.mark = ",", trim = TRUE)),
               size = 3.8, colour = "grey30") +
-    facet_wrap(~ panel, nrow = nrow, scales = "free_x") +
+    facet_wrap(~ panel, nrow = nrow, scales = "free_x", labeller = strip_labeller) +
     scale_x_continuous(breaks = x_breaks, labels = x_labels, expand = c(0, 0)) +
     scale_colour_manual(values = class_colours, guide = "none") +
     scale_fill_manual(values = class_colours, guide = "none") +
     scale_linetype_manual(values = c(`FALSE` = "solid", `TRUE` = "22"), guide = "none") +
     scale_y_continuous(breaks = function(l) { b <- scales::breaks_extended(5)(y_lim); b[b >= y_lim[1] & b <= y_lim[2]] }) +   # ticks only inside y_lim, not in the count strip
-    coord_cartesian(ylim = c(y_lim[1] - 0.02 * diff(y_lim), y_lim[2] + 0.13 * diff(y_lim)), expand = FALSE) +
-    labs(x = "SDM class (A–C)  ·  range-change category (D–F)",
-         y = "Route trend (% per year)",
-         caption = caption) +
+    coord_cartesian(ylim = c(y_lim[1] - 0.13 * diff(y_lim), y_lim[2] + 0.02 * diff(y_lim)), expand = FALSE) +
+    labs(x = x_title, y = NULL) +   # one y title for both rows, added in save step
     theme_minimal(base_size = 11) +
     theme(panel.grid.minor = element_blank(),
           panel.grid.major.x = element_blank(),
@@ -297,4 +304,14 @@ save_plot <- function(p, stem, width, height) {
   }
 }
 
-save_plot(make_plot(panels$id, nrow = 2, title_size = 11.5), fig_stem, width = 15, height = 12)
+n_cut_all <- n_cut %>% distinct(species, n)
+cat("Routes outside", y_lim[1], "to", y_lim[2], "%/yr (cut off):",
+    paste0(n_cut_all$species, " ", n_cut_all$n, collapse = ", "), "\n")
+
+# Row 1 (A-C) and row 2 (D-F) as separate plots, stacked, so each row has its own x title
+row1 <- make_plot(panels$id[panels$kind == "overall"], nrow = 1, x_title = "SDM class", title_size = 11.5)
+row2 <- make_plot(panels$id[panels$kind != "overall"], nrow = 1, x_title = "Range-change category", title_size = 11.5)
+fig3 <- gridExtra::arrangeGrob(
+  ggplotGrob(row1), ggplotGrob(row2), ncol = 1,
+  left = grid::textGrob("Route trend (% per year)", rot = 90, gp = grid::gpar(fontsize = 15, fontface = "bold")))
+save_plot(fig3, fig_stem, width = 15, height = 12)

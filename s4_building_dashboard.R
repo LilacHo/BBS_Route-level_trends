@@ -1,18 +1,20 @@
-# 7_build_dashboard.R
+# s4_building_dashboard.R
 #
 # Builds a static, self-contained local dashboard (dashboard/) for browsing,
 # per species x model (base/anthro) x climate scenario (RCP4.5/RCP8.5):
-#   - the by-RCP violin plot (8 SDM categories, both scenarios in one image)
-#   - the by-group violin plot (Contraction/Stable/Expansion, both scenarios)
-#   - the range-shift map (changes with model AND scenario)
-#   - a Contraction/Stable/Expansion table (n, mean, sd) for both models
-#     side by side
+#   - the tracking-slope plot: route trends by SDM class 1-7 with the species'
+#     tracking slope (v2_species_tracking_slope.R)
+#   - the range-change-category plot: route trends pooled into Decreasing
+#     suitability / Neutral / Increasing suitability, with the category means and
+#     the steps between them (v2_species_tracking_slope.R)
+#   - the range-shift map
+#   - the route-trend-distribution raincloud plot (v3_species_trend_distributions.R)
+#   - a Decreasing suitability/Neutral/Increasing suitability table (n, mean, sd) for the selected
+#     model + scenario
 #
-# Scope: only the 469 species that actually have model output (i.e. appear
-# in output/species_routes_covariates/per_species_sdm/) -- this is the
-# authoritative species list, taken straight from those CSVs rather than
-# data/spp_names_codes_group_aou.csv (which has ~611 rows, most without any
-# model output).
+# Scope: only species with model output (those in
+# output/species_routes_covariates/per_species_sdm/), not the full
+# data/spp_names_codes_group_aou.csv list.
 #
 # No fetch()/server needed: manifest + table data are written as plain .js
 # files (`const X = {...}`) loaded via <script src>, so dashboard/index.html
@@ -21,21 +23,36 @@
 # Reads:
 #   output/species_routes_covariates/per_species_sdm/*_base_route_trends_sdm.csv
 #     (species list: code, name, group, slug -- one row read per file)
-#   output/species_routes_covariates/per_species_sdm_plot/per_species/*.png
-#     (by-RCP and by-group violins)
-#   output/species_maps/<model>/<rcp>/*.png
+#   output/visualizations/species_tracking_slope/<model>/<rcp>/*.png
+#     (tracking-slope plots, v2_species_tracking_slope.R)
+#   output/visualizations/species_category_trend/<model>/<rcp>/*.png
+#     (range-change-category plots, v2_species_tracking_slope.R; these replace the
+#     old *_trend_by_group_*_cld.png violins of the former
+#     4c_statistical_analysis_and_visualization_covariates.R)
+#   output/visualizations/species_maps/<model>/<rcp>/*.png
 #     (range-shift maps)
+#   output/visualizations/species_trend_distributions/<model>/<rcp>/*.png
+#     (raincloud plots; a species/model/scenario with <5 categorized routes
+#     has no file here -- not an error, see v3_species_trend_distributions.R)
 #   output/files/all_species_habitat_contraction_stable_expansion_2010_2025_{base,anthro}.xlsx
-#     (Contraction/Stable/Expansion n/mean/sd table, both RCP sheets)
+#     (Decreasing suitability/Neutral/Increasing suitability n/mean/sd table, both RCP sheets)
 #
 # Writes:
 #   dashboard/data/manifest.js, dashboard/data/tables.js
-#   dashboard/img/violin_rcp/<code>_<model>.webp
-#   dashboard/img/violin_group/<code>_<model>.webp   (skipped where no source exists)
+#   dashboard/img/tracking_slope/<code>_<model>_<rcp>.webp (skipped where no source exists)
+#   dashboard/img/violin_group/<code>_<model>_<rcp>.webp  (skipped where no source exists)
 #   dashboard/img/maps/<code>_<model>_<rcp>.webp
+#   dashboard/img/trend_dist/<code>_<model>_<rcp>.webp    (skipped where no source exists)
 #
-# Idempotent: re-running overwrites all generated files; nothing here is
-# resumable/skippable since a full rebuild only takes a few minutes.
+# Missing-source handling: maps are required (every species/model/scenario
+# has one; a gap is a real error). Violins and trend-distributions can
+# legitimately be absent for a given species/model/scenario (no routes in
+# any Decreasing suitability/Neutral/Increasing suitability category, or fewer than v3's
+# min_routes_per_plot) -- those are skipped during conversion, and
+# dashboard/app.js shows a placeholder when the webp is missing rather than
+# needing a precomputed "is this available" flag.
+#
+# Idempotent: re-running rebuilds all generated files.
 
 library(here)
 library(tidyverse)
@@ -43,29 +60,39 @@ library(openxlsx)
 library(magick)
 library(jsonlite)
 
-here::i_am("7_build_dashboard.R")
+here::i_am("s4_building_dashboard.R")
 
 # Settings -------------------------------------------------------------------
 models    <- c("base", "anthro")
 scenarios <- c("rcp45", "rcp85")
 scenario_sheet <- c(rcp45 = "RCP4.5", rcp85 = "RCP8.5")
-grp_levels <- c("Contraction", "Stable", "Expansion")
+grp_levels <- c("Decreasing suitability", "Neutral", "Increasing suitability")
 
-violin_width  <- 700   # px, violins are square (ggsave width=height=8in)
+violin_width  <- 700   # px, width of the tracking-slope and category plots
 map_width     <- 1400  # px, maps are all fig_width=10in wide -> uniform scale factor
 webp_quality  <- 82
 
-sdm_dir      <- here::here("output", "species_routes_covariates", "per_species_sdm")
-violin_dir   <- here::here("output", "species_routes_covariates", "per_species_sdm_plot", "per_species")
-maps_src_dir <- here::here("output", "species_maps")
-files_dir    <- here::here("output", "files")
+sdm_dir        <- here::here("output", "species_routes_covariates", "per_species_sdm")
+category_dir   <- here::here("output", "visualizations", "species_category_trend")
+tracking_dir   <- here::here("output", "visualizations", "species_tracking_slope")
+maps_src_dir   <- here::here("output", "visualizations", "species_maps")
+trend_dist_dir <- here::here("output", "visualizations", "species_trend_distributions")
+files_dir      <- here::here("output", "files")
 
-dash_dir       <- here::here("dashboard")
-data_dir       <- file.path(dash_dir, "data")
-violin_rcp_out <- file.path(dash_dir, "img", "violin_rcp")
-violin_grp_out <- file.path(dash_dir, "img", "violin_group")
-map_out        <- file.path(dash_dir, "img", "maps")
-for (d in c(data_dir, violin_rcp_out, violin_grp_out, map_out)) {
+dash_dir        <- here::here("dashboard")
+data_dir        <- file.path(dash_dir, "data")
+tracking_out    <- file.path(dash_dir, "img", "tracking_slope")
+violin_grp_out  <- file.path(dash_dir, "img", "violin_group")
+map_out         <- file.path(dash_dir, "img", "maps")
+trend_dist_out  <- file.path(dash_dir, "img", "trend_dist")
+
+# Wipe and recreate each image output dir so files from an old naming
+# scheme don't linger.
+old_violin_rcp <- file.path(dash_dir, "img", "violin_rcp")   # replaced by tracking_slope
+for (d in c(old_violin_rcp, tracking_out, violin_grp_out, map_out, trend_dist_out)) {
+  if (dir.exists(d)) unlink(d, recursive = TRUE)
+}
+for (d in c(data_dir, tracking_out, violin_grp_out, map_out, trend_dist_out)) {
   dir.create(d, recursive = TRUE, showWarnings = FALSE)
 }
 
@@ -88,8 +115,7 @@ stopifnot(!any(duplicated(species_meta$code)))
 stopifnot(!any(duplicated(species_meta$slug)))
 
 # Map filenames use the species' common name with apostrophes stripped and
-# spaces -> underscores (confirmed exact for all 469 species against the
-# actual output/species_maps/ files before this script was written).
+# spaces -> underscores.
 species_meta <- species_meta %>%
   mutate(map_slug = str_replace_all(str_remove_all(name, "'"), " ", "_"))
 
@@ -100,37 +126,37 @@ species_meta <- species_meta %>%
 # ==========================================================================
 cat("\n=== Checking source file coverage ===\n")
 
-check_missing <- function(paths, label) {
+check_missing <- function(paths, label, required = TRUE) {
   missing <- paths[!file.exists(paths)]
-  cat(label, "-- missing:", length(missing), "of", length(paths), "\n")
+  cat(label, "-- missing:", length(missing), "of", length(paths),
+      if (required) "(required)" else "(legitimately optional -- see header note)", "\n")
   if (length(missing) > 0) print(head(missing, 10))
   missing
 }
 
+# Maps: every species/model/scenario has one -- any gap here is a real error.
 map_paths <- expand_grid(i = seq_len(nrow(species_meta)), model = models, scenario = scenarios) %>%
   mutate(path = file.path(maps_src_dir, model, scenario,
                           paste0(species_meta$map_slug[i], "_", model, "_", scenario, "_2010_2025.png")))
-missing_maps <- check_missing(map_paths$path, "Range-shift maps")
+missing_maps <- check_missing(map_paths$path, "Range-shift maps", required = TRUE)
+stopifnot("Missing map files -- run v1_species_map.R first" = length(missing_maps) == 0)
 
-rcp_violin_paths <- expand_grid(code = species_meta$code, model = models) %>%
-  mutate(path = file.path(violin_dir, paste0("all_groups_", model, "_", code, "_trend_by_rcp_cld.png")))
-missing_rcp_violins <- check_missing(rcp_violin_paths$path, "By-RCP violins")
+# Violins and trend-distributions: can legitimately be absent for a given
+# species/model/scenario (see header note) -- just reported, not asserted.
+tracking_paths <- expand_grid(i = seq_len(nrow(species_meta)), model = models, scenario = scenarios) %>%
+  mutate(path = file.path(tracking_dir, model, scenario,
+                          paste0(species_meta$slug[i], "_", model, "_", scenario, "_2010_2025.png")))
+invisible(check_missing(tracking_paths$path, "Tracking-slope plots", required = FALSE))
 
-grp_violin_paths <- expand_grid(code = species_meta$code, model = models) %>%
-  mutate(path = file.path(violin_dir, paste0("all_groups_", model, "_", code, "_trend_by_group_cld.png")))
-missing_grp_violins <- check_missing(grp_violin_paths$path, "By-group violins")
-# Expected: Red-breasted Merganser (RBME) x2 models -- 0 routes fall in
-# Contraction/Stable/Expansion for either scenario, so 4c never wrote this
-# plot for it. Any OTHER species missing here is a real gap worth checking.
-unexpected_missing_grp <- grp_violin_paths %>% filter(path %in% missing_grp_violins, code != "RBME")
-if (nrow(unexpected_missing_grp) > 0) {
-  cat("UNEXPECTED missing by-group violins (not RBME):\n")
-  print(unexpected_missing_grp)
-}
+category_paths <- expand_grid(i = seq_len(nrow(species_meta)), model = models, scenario = scenarios) %>%
+  mutate(path = file.path(category_dir, model, scenario,
+                          paste0(species_meta$slug[i], "_", model, "_", scenario, "_2010_2025.png")))
+invisible(check_missing(category_paths$path, "Range-change-category plots", required = FALSE))
 
-stopifnot("Missing map files -- run 3d_visualization_map.R first" = length(missing_maps) == 0)
-stopifnot("Missing by-RCP violin files -- run 4c first" = length(missing_rcp_violins) == 0)
-stopifnot("Unexpected missing by-group violin files" = nrow(unexpected_missing_grp) == 0)
+trend_dist_paths <- expand_grid(i = seq_len(nrow(species_meta)), model = models, scenario = scenarios) %>%
+  mutate(path = file.path(trend_dist_dir, model, scenario,
+                          paste0(species_meta$slug[i], "_", model, "_", scenario, "_2010_2025.png")))
+invisible(check_missing(trend_dist_paths$path, "Trend-distribution plots", required = FALSE))
 
 # ==========================================================================
 # 3. Table data from the two xlsx workbooks (RCP4.5 + RCP8.5 sheets each)
@@ -140,6 +166,11 @@ cat("\n=== Reading xlsx tables ===\n")
 read_grp_sheet <- function(model, scenario) {
   path <- file.path(files_dir, paste0("all_species_habitat_contraction_stable_expansion_2010_2025_", model, ".xlsx"))
   d <- openxlsx::read.xlsx(path, sheet = scenario_sheet[[scenario]])
+  # The workbooks still carry the old "Contraction"/"Stable"/"Expansion"
+  # headers -- relabel to grp_levels so "Contraction.n" becomes "Decreasing suitability.n".
+  names(d) <- sub("^Stable\\.", "Neutral.",
+                  sub("^Expansion\\.", "Increasing suitability.",
+                      sub("^Contraction\\.", "Decreasing suitability.", names(d))))
   cat(" ", basename(path), scenario_sheet[[scenario]], "--", nrow(d), "rows\n")
   d
 }
@@ -147,10 +178,9 @@ read_grp_sheet <- function(model, scenario) {
 xlsx_raw <- expand_grid(model = models, scenario = scenarios) %>%
   mutate(data = map2(model, scenario, read_grp_sheet))
 
-# tables[[code]][[model]][[scenario]] = list(Contraction=list(n,mean,sd)|NULL, Stable=..., Expansion=...)
-# NOTE: openxlsx::read.xlsx() converts header cells like "Contraction n" into
-# the column name "Contraction.n" (space -> dot) -- confirmed via
-# colnames(read.xlsx(...)) before writing this, not guessed.
+# tables[[code]][[model]][[scenario]] = list(Decreasing suitability=list(n,mean,sd)|NULL, Neutral=..., Increasing suitability=...)
+# openxlsx::read.xlsx() turns header "Contraction n" into "Contraction.n";
+# read_grp_sheet() relabels that to "Decreasing suitability.n".
 build_species_row <- function(row) {
   out <- list()
   for (g in grp_levels) {
@@ -204,25 +234,35 @@ t0 <- Sys.time()
 n_done <- 0
 report_every <- 200
 
+convert_if_exists <- function(src, dst, width) {
+  if (!file.exists(src)) return(FALSE)
+  convert_one(src, dst, width)
+  TRUE
+}
+
 for (i in seq_len(nrow(species_meta))) {
   code <- species_meta$code[i]
   for (model in models) {
-    # By-RCP violin
-    src <- file.path(violin_dir, paste0("all_groups_", model, "_", code, "_trend_by_rcp_cld.png"))
-    convert_one(src, file.path(violin_rcp_out, paste0(code, "_", model, ".webp")), violin_width)
-    n_done <- n_done + 1
-
-    # By-group violin (skip for RBME, which has none)
-    src <- file.path(violin_dir, paste0("all_groups_", model, "_", code, "_trend_by_group_cld.png"))
-    if (file.exists(src)) {
-      convert_one(src, file.path(violin_grp_out, paste0(code, "_", model, ".webp")), violin_width)
-    }
-    n_done <- n_done + 1
-
     for (scenario in scenarios) {
+      src <- file.path(tracking_dir, model, scenario,
+                       paste0(species_meta$slug[i], "_", model, "_", scenario, "_2010_2025.png"))
+      convert_if_exists(src, file.path(tracking_out, paste0(code, "_", model, "_", scenario, ".webp")), violin_width)
+      n_done <- n_done + 1
+
+      # range-change-category plot; the dashboard folder keeps its old name (img/violin_group)
+      src <- file.path(category_dir, model, scenario,
+                       paste0(species_meta$slug[i], "_", model, "_", scenario, "_2010_2025.png"))
+      convert_if_exists(src, file.path(violin_grp_out, paste0(code, "_", model, "_", scenario, ".webp")), violin_width)
+      n_done <- n_done + 1
+
       src <- file.path(maps_src_dir, model, scenario,
                        paste0(species_meta$map_slug[i], "_", model, "_", scenario, "_2010_2025.png"))
       convert_one(src, file.path(map_out, paste0(code, "_", model, "_", scenario, ".webp")), map_width)
+      n_done <- n_done + 1
+
+      src <- file.path(trend_dist_dir, model, scenario,
+                       paste0(species_meta$slug[i], "_", model, "_", scenario, "_2010_2025.png"))
+      convert_if_exists(src, file.path(trend_dist_out, paste0(code, "_", model, "_", scenario, ".webp")), violin_width * 1.3)
       n_done <- n_done + 1
     }
   }
@@ -239,8 +279,7 @@ cat(sprintf("Converted images for %d species in %s\n", nrow(species_meta), forma
 cat("\n=== Writing manifest.js + tables.js ===\n")
 
 manifest <- species_meta %>%
-  mutate(has_group_violin = !(code == "RBME")) %>%   # only known gap
-  select(code, name, group, has_group_violin) %>%
+  select(code, name, group) %>%
   arrange(name)
 
 groups <- sort(unique(manifest$group))

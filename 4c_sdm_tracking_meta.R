@@ -29,7 +29,8 @@
 #      separately per category; species sets "main" (each category uses the species with
 #      routes in it) and "common" (species with routes in all three); differences from
 #      Neutral on the common set, with se = sqrt(se_a^2 + se_b^2) (the categories use
-#      disjoint routes, so their draws are close to independent; an approximation)
+#      disjoint routes, so their draws are close to independent; an approximation);
+#      and the same for each single SDM class 1-7 (Figure 2's per-class estimates)
 #   5. Species traits: one model per trait (habitat group, family, order + family, diet;
 #      migration, Red List and invasive status as fixed effects, too few levels to
 #      estimate a between-group SD), each compared with the no-trait model by PSIS-LOO
@@ -42,7 +43,7 @@
 #   sdm_tracking_stage2_models_<suffix>.csv    one row per slope model: mu, tau, sigmas, LOO, diagnostics
 #   sdm_tracking_stage2_groups_<suffix>.csv    one row per trait model x group level
 #   sdm_tracking_stage2_species_<suffix>.csv   one row per species: estimated and shrunken slopes, class
-#   sdm_tracking_category_levels_<suffix>.csv  one row per category quantity x species set
+#   sdm_tracking_category_levels_<suffix>.csv  one row per category / class quantity x species set
 #
 # Needs: tidyverse, cmdstanr (with CmdStan installed), posterior, loo.
 
@@ -85,8 +86,8 @@ out_levels  <- file.path(out_dir, paste0("sdm_tracking_category_levels_", suffix
 
 # Data -----------------------------------------------------------------------
 stage1 <- read.csv(stage1_csv, stringsAsFactors = FALSE)
-if (!"mean_neutral_mean" %in% names(stage1)) {
-  stop(basename(stage1_csv), " has no category means: rerun 4b_sdm_tracking_species.R")
+if (!all(c("mean_neutral_mean", "mean_class1_mean") %in% names(stage1))) {
+  stop(basename(stage1_csv), " has no category / class means: rerun 4b_sdm_tracking_species.R")
 }
 traits <- read.csv(traits_csv, stringsAsFactors = FALSE) %>%
   filter(in_bbs %in% TRUE) %>% distinct(Code, .keep_all = TRUE) %>%
@@ -271,7 +272,13 @@ cat_specs <- list(
   list("common", "Decreasing suitability - Neutral",     common, "dn"),
   list("common", "Increasing suitability - Neutral",     common, "in")
 )
-levels_out <- map_dfr(cat_specs, function(s) {
+# Single SDM classes 1-7 (average species in each class; Figure 2's ticks and intervals),
+# each using the species with routes in that class
+class_labels <- c("extirpation", "worsening", "slightly worsening", "neutral",
+                  "slightly improving", "improving", "colonization")
+class_specs <- map(setdiff(1:7, exclude_classes), function(k)
+  list("main", paste0("Class ", k, " (", class_labels[k], ")"), d, paste0("mean_class", k)))
+levels_out <- map_dfr(c(cat_specs, class_specs), function(s) {
   cat("Fitting category mean:", s[[1]], s[[2]], "\n")
   fit_level(s[[3]], paste0(s[[4]], "_mean"), paste0(s[[4]], "_sd")) %>%
     mutate(species_set = s[[1]], quantity = s[[2]], .before = 1)
