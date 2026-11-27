@@ -6,9 +6,9 @@
 # Non-native = listed in the lower-48 US-RIIS v2.0 (Widespread invasive or
 # Established; column `invasive` from 0d_prepare_invasive.R).
 #
-# The native-only analyses themselves are run by 4a_group_mean.R (category
-# means) and 4c_sdm_tracking_traits.R (stage-2 tracking models), both with
-# native_only <- TRUE (outputs tagged "_native"). Stage 1
+# The native-only analyses themselves are run by 4a_sdm_tracking_routes.R (route
+# counts), 4c_sdm_tracking_meta.R (category means and tracking models) and
+# 4d_sdm_tracking_traits.R (trait models), all with native_only <- TRUE (outputs tagged "_native"). Stage 1
 # (4b_sdm_tracking_species.R) is computed species by species with a fixed seed,
 # so its output still holds the non-native species and is filtered here.
 #
@@ -108,11 +108,14 @@ cat(sprintf("  %d of %d species (%.1f%%); %d of %d route-by-species pairs (%.1f%
 print(s1_nn %>% select(species, species_code, invasive, n_routes, slope_mean, slope_sd, slope_p_pos) %>%
         arrange(slope_mean) %>% as.data.frame(), digits = 3)
 
-# 5. Category means (4a_group_mean.R) ---------------------------------------------
-# All-species files are compared only when present (run 4a_group_mean.R /
-# 4c_sdm_tracking_traits.R with native_only <- FALSE to produce them).
+# 5. Category means (4c_sdm_tracking_meta.R) ---------------------------------------------
+# All-species files are compared only when present (run 4a_sdm_tracking_routes.R /
+# 4c_sdm_tracking_meta.R with native_only <- FALSE to produce them).
 cat_nat <- read_if(file.path(track_dir, paste0("sdm_tracking_category_levels_", suffix, "_native.csv")))
 cat_all <- read_if(file.path(track_dir, paste0("sdm_tracking_category_levels_", suffix, ".csv")))
+# 4a labelled the main species set "all" before it was renamed "main"
+if (!is.null(cat_all)) cat_all <- cat_all %>% mutate(species_set = recode(species_set, all = "main"))
+if (!is.null(cat_nat)) cat_nat <- cat_nat %>% mutate(species_set = recode(species_set, all = "main"))
 cat("\n== 5. Category means (%/yr), native only ==\n")
 if (!is.null(cat_nat)) print(as.data.frame(cat_nat), digits = 3) else cat("  native category-level file not found\n")
 if (!is.null(cat_all) && !is.null(cat_nat)) {
@@ -124,7 +127,7 @@ if (!is.null(cat_all) && !is.null(cat_nat)) {
   print(as.data.frame(cat_cmp), digits = 3)
 } else cat("  (no all-species category-level file: comparison skipped)\n")
 
-# 6. Stage-2 tracking models (4c_sdm_tracking_traits.R) ---------------------------
+# 6. Tracking-slope models (4c_sdm_tracking_meta.R) ---------------------------
 keep_cols <- c("model", "response", "n_species", "mu_mean", "mu_lo", "mu_hi", "p_mu_pos", "tau_mean",
                "pct_species_negative", "elpd_diff", "se_diff")
 m_nat <- read_if(file.path(track_dir, paste0("sdm_tracking_stage2_models_", suffix, "_native.csv")))
@@ -136,7 +139,17 @@ if (!is.null(m_all)) {
   print(as.data.frame(m_all %>% select(any_of(keep_cols))), digits = 3)
 } else cat("  (no all-species stage-2 file: comparison skipped)\n")
 
-g_nat  <- read_if(file.path(track_dir, paste0("sdm_tracking_stage2_groups_", suffix, "_native.csv")))
+# Trait models (4d_sdm_tracking_traits.R); the all-species run includes invasive status
+t_nat <- read_if(file.path(track_dir, paste0("sdm_tracking_traits_models_", suffix, "_native.csv")))
+t_all <- read_if(file.path(track_dir, paste0("sdm_tracking_traits_models_", suffix, ".csv")))
+cat("\nTrait models, native only:\n")
+if (!is.null(t_nat)) print(as.data.frame(t_nat %>% select(any_of(keep_cols))), digits = 3) else cat("  native trait-model file not found\n")
+if (!is.null(t_all)) {
+  cat("\nTrait models, all species (incl. invasive status):\n")
+  print(as.data.frame(t_all %>% select(any_of(keep_cols))), digits = 3)
+}
+
+g_nat  <- read_if(file.path(track_dir, paste0("sdm_tracking_traits_groups_", suffix, "_native.csv")))
 sp_nat <- read_if(file.path(track_dir, paste0("sdm_tracking_stage2_species_", suffix, "_native.csv")))
 if (!is.null(g_nat) && !is.null(sp_nat)) {
   cat("\nHabitat-group slopes, native only (main.tex Table 2):\n")
@@ -153,7 +166,7 @@ if (!is.null(g_nat) && !is.null(sp_nat)) {
 }
 
 # 7. SDM-matched routes, all vs native ---------------------------------------
-# Same filters as Part 0 of 4a_group_mean.R: converged routes, classes 1-7,
+# Same filters as 4a_sdm_tracking_routes.R: converged routes, classes 1-7,
 # species with routes in at least min_classes classes.
 sdm_files <- list.files(sdm_dir, pattern = paste0("_", model_tag, "_route_trends_sdm\\.csv$"), full.names = TRUE)
 sdm_routes <- map_dfr(sdm_files, ~ read.csv(.x, stringsAsFactors = FALSE) %>%

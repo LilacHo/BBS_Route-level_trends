@@ -18,7 +18,7 @@
 # (mean score, mean trend). Averaging those lines over species gives a line through
 # (mean of species' xbar, mean of species' ybar), drawn here with slope mu.
 #
-# Inputs (same as 4j):
+# Inputs:
 #   output/species_routes_covariates/per_species_sdm/<Species>_<model_tag>_route_trends_sdm.csv
 #   output/sdm_tracking/sdm_tracking_stage1_species_<suffix>.csv
 #   output/sdm_tracking/sdm_tracking_stage2_models_<suffix>_native.csv   (4c)
@@ -44,7 +44,7 @@ suffix    <- paste(model_tag, scenario, firstYear, lastYear, sep = "_")
 # "Overall (Student-t)", which is used when present.
 stage2_model <- "Overall"
 y_lim        <- c(-5, 5)    # y-axis window (%/yr); routes beyond it are cut off visually
-line_colour  <- "#2a78d6"     # 4j's "Tracks" blue
+line_colour  <- "#2a78d6"     # the "Tracks" blue 
 
 route_dir  <- here::here("output", "species_routes_covariates", "per_species_sdm")
 track_dir  <- here::here("output", "sdm_tracking")

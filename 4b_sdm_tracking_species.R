@@ -11,12 +11,10 @@
 #   2. TRACKING SLOPE: route trend is regressed on the route's SDM class score by
 #      ordinary least squares (routes weighted equally), in %/yr per class step.
 #      Positive = trends are better where the SDM projects improving suitability;
-#   3. the same slope on the worsening half (classes 1-4) and the improving half
-#      (classes 4-7) of the gradient, for species with >= 2 classes on that half;
-#   4. CATEGORY MEANS: the mean trend of the species' routes in each range-change
+#   3. CATEGORY MEANS: the mean trend of the species' routes in each range-change
 #      category (Decreasing suitability = 1-3, Neutral = 4, Increasing suitability = 5-7),
 #      for the categories in which the species has routes;
-#   5. CLASS MEANS: the same mean trend for each single SDM class 1-7 (for Figure 2's
+#   4. CLASS MEANS: the same mean trend for each single SDM class 1-7 (for Figure 2's
 #      per-class estimates and intervals).
 # Each quantity is then summarized across draws by its mean (y) and SD (se), the
 # inputs to the meta-analysis in 4c. Because the draws are joint across routes,
@@ -40,7 +38,7 @@
 # Writes: output/sdm_tracking/sdm_tracking_stage1_species_<suffix>.csv
 #           one row per species: status, route counts per class and category, and for
 #           each quantity its posterior mean, sd, 2.5% / 97.5% quantiles and P(> 0):
-#           slope_*, slope_low_*, slope_up_*, mean_decreasing_*, mean_neutral_*, mean_increasing_*,
+#           slope_*, mean_decreasing_*, mean_neutral_*, mean_increasing_*,
 #           mean_class1_* ... mean_class7_*
 #         output/sdm_tracking/sdm_tracking_stage1_draws_<suffix>.rds   (optional, save_draws)
 #         output/sdm_tracking/sdm_tracking_stage1_log_<suffix>.txt
@@ -150,12 +148,9 @@ process_species <- function(sdm_file) {
   Y <- 100 * (exp(unclass(dm)[keep, cols, drop = FALSE]) - 1)   # draws x routes, %/yr
   rm(dm); invisible(gc())
 
-  # Tracking slopes, in every draw
+  # Tracking slope, in every draw
   x <- unname(class_score[as.character(sdm$cls)])
   s_all <- slope_draws(Y, x)
-  low <- sdm$cls <= 4; up <- sdm$cls >= 4
-  s_low <- if (n_distinct(x[low]) >= 2) slope_draws(Y[, low, drop = FALSE], x[low]) else NULL
-  s_up  <- if (n_distinct(x[up])  >= 2) slope_draws(Y[, up,  drop = FALSE], x[up])  else NULL
 
   # Category means and single-class means, in every draw
   draw_mean <- function(cls) {
@@ -166,18 +161,17 @@ process_species <- function(sdm_file) {
   m_class <- map(1:7, draw_mean)
 
   row <- bind_cols(base, as_tibble(c(
-    summ(s_all, "slope"), summ(s_low, "slope_low"), summ(s_up, "slope_up"),
+    summ(s_all, "slope"),
     summ(m_cat$decreasing, "mean_decreasing"), summ(m_cat$neutral, "mean_neutral"),
     summ(m_cat$increasing, "mean_increasing"),
     unlist(map(1:7, ~ summ(m_class[[.x]], paste0("mean_class", .x))), recursive = FALSE),
-    list(cor_low_up = if (!is.null(s_low) && !is.null(s_up)) cor(s_low, s_up) else NA_real_,
-         n_draws_used = length(keep))
+    list(n_draws_used = length(keep))
   ))) %>% mutate(status = "ok")
 
   dr <- NULL
   if (save_draws) {
     k <- seq_len(min(n_draws_saved, length(s_all)))
-    dr <- list(slope = s_all[k], slope_low = s_low[k], slope_up = s_up[k])
+    dr <- list(slope = s_all[k])
   }
   list(row = row, draws = dr)
 }
